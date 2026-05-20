@@ -1,3 +1,4 @@
+mod application;
 mod cli;
 mod domain;
 mod infra;
@@ -11,11 +12,12 @@ use tracing::instrument;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
-    cli::Command,
-    domain::{
+    application::{
         ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase, ScanFolderUseCase,
-        TakeTranscodeDecisionUseCase, WatchEventUseCase,
+        WatchEventUseCase,
     },
+    cli::Command,
+    domain::TakeTranscodeDecisionService,
     infra::{
         Config, Ffprobe, PostgresEventListener, PostgressRepository, RadarrProvider, TokioScanner,
     },
@@ -52,11 +54,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         postgres_repo.clone(),
         radarr_provider.clone(),
         postgres_repo.clone(),
-        postgres_repo.clone(),
     ));
 
     // Take a transcode decision
-    let take_decision_use_case = Arc::new(TakeTranscodeDecisionUseCase::new(
+    let take_decision_service = Arc::new(TakeTranscodeDecisionService::new(
         cfg.min_file_size_gb,
         cfg.min_bits_per_pixel,
         cfg.min_compression_potential,
@@ -64,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // When metadata fetched
     let process_fetched_use_case = Arc::new(ProcessFetchedLibraryItemUseCase::new(
-        take_decision_use_case.clone(),
+        take_decision_service.clone(),
         postgres_repo.clone(),
         postgres_repo.clone(),
         postgres_repo.clone(),

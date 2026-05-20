@@ -1,48 +1,151 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use sqlx::{Executor, Postgres};
 use tracing::{debug, instrument};
+use uuid::Uuid;
 
 use crate::{
-    domain::{Event, EventRepository},
-    infra::PostgressRepository,
+    domain::{DomainEvent, EventRepository},
+    infra::{PostgressRepository, repository::error::RepositoryError},
 };
+
+#[derive(Default)]
+struct EventRecord {
+    event_type: &'static str,
+    media_file_id: Option<Uuid>,
+    library_item_id: Option<Uuid>,
+    bits_per_pixel: Option<f64>,
+    compression_potential: Option<f64>,
+    crf: Option<i16>,
+    skip_reason: Option<&'static str>,
+    dst_media_file_id: Option<Uuid>,
+    encode_duration_secs: Option<i32>,
+    gain_bytes: Option<i64>,
+    error_message: Option<String>,
+    dry_run: bool,
+}
 
 #[async_trait]
 impl EventRepository for PostgressRepository {
     #[instrument(skip(self), err)]
-    async fn save_event(&self, event: Event) -> Result<()> {
+    async fn save_event(&self, event: DomainEvent) -> Result<()> {
         insert_event_inner(&self.pool, event).await?;
         Ok(())
     }
 }
 
 #[instrument(skip(executor), err)]
-pub(super) async fn insert_event_inner<'e, E>(executor: E, event: Event) -> Result<i64>
+pub(super) async fn insert_event_inner<'e, E>(
+    executor: E,
+    event: DomainEvent,
+) -> Result<(), RepositoryError>
 where
     E: Executor<'e, Database = Postgres>,
 {
     debug!("Insert new event");
 
+    let record = EventRecord::from(event);
+
     sqlx::query!(
          "INSERT INTO events (event_type, media_file_id, library_item_id, compression_potential, bits_per_pixel, crf, skip_reason, dst_media_file_id, encode_duration_secs, gain_bytes, error_message, dry_run)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           RETURNING id",
-        event.event_type.as_str(),
-        event.media_file_id,
-        event.library_item_id,
-        event.compression_potential,
-        event.bits_per_pixel,
-        event.crf,
-        event.skip_reason.map(|s| s.as_str()),
-        event.dst_media_file_id,
-        event.encode_duration_secs,
-        event.gain_bytes,
-        event.error_message.as_deref(),
-        event.dry_run
+          record.event_type,
+          record.media_file_id,
+          record.library_item_id,
+          record.compression_potential,
+          record.bits_per_pixel,
+          record.crf,
+          record.skip_reason,
+          record.dst_media_file_id,
+          record.encode_duration_secs,
+          record.gain_bytes,
+          record.error_message,
+          record.dry_run
     )
         .fetch_one(executor)
         .await
-        .map(|r| r.id)
-        .context("Failed to insert event")
+        .map(|_| ())
+        .map_err(RepositoryError::Database)
+}
+
+impl From<DomainEvent> for EventRecord {
+    fn from(event: DomainEvent) -> Self {
+        match event {
+            DomainEvent::FileDiscovered { media_file_id } => EventRecord {
+                event_type: "file_discovered",
+                media_file_id: Some(media_file_id.as_uuid()),
+                ..Default::default()
+            },
+            DomainEvent::MetadataFetched { library_item_id } => EventRecord {
+                event_type: "metadata_fetched",
+                library_item_id: Some(library_item_id.as_uuid()),
+                ..Default::default()
+            },
+            DomainEvent::MetadataFetchFailed {
+                media_file_id,
+                error,
+            } => EventRecord {
+                event_type: "metadata_fetch_failed",
+                media_file_id: Some(media_file_id.as_uuid()),
+                error_message: Some(error),
+                ..Default::default()
+            },
+            DomainEvent::TranscodeDecisionApproved {
+                media_file_id,
+                bpp,
+                compression_potential,
+                crf,
+                dry_run,
+            } => EventRecord {
+                event_type: "transcode_decision_approved",
+                media_file_id: Some(media_file_id.as_uuid()),
+                bits_per_pixel: Some(bpp),
+                compression_potential: Some(compression_potential),
+                crf: Some(crf.into()),
+                dry_run,
+                ..Default::default()
+            },
+            DomainEvent::TranscodeDecisionSkipped {
+                media_file_id,
+                skip_reason,
+                bpp,
+                compression_potential,
+            } => EventRecord {
+                event_type: "transcode_decision_skipped",
+                media_file_id: Some(media_file_id.as_uuid()),
+                skip_reason: Some(skip_reason.as_str()),
+                bits_per_pixel: bpp,
+                compression_potential,
+                ..Default::default()
+            },
+            DomainEvent::TranscodeStarted { media_file_id } => EventRecord {
+                event_type: "transcode_started",
+                media_file_id: Some(media_file_id.as_uuid()),
+                ..Default::default()
+            },
+            DomainEvent::TranscodeFailed {
+                media_file_id,
+                error,
+            } => EventRecord {
+                event_type: "transcode_failed",
+                media_file_id: Some(media_file_id.as_uuid()),
+                error_message: Some(error),
+                ..Default::default()
+            },
+            DomainEvent::TranscodeCompleted {
+                media_file_id,
+                dst_media_file_id,
+                encode_duration_secs,
+                gain_bytes,
+            } => EventRecord {
+                event_type: "transcode_completed",
+                media_file_id: Some(media_file_id.as_uuid()),
+                dst_media_file_id: Some(dst_media_file_id.as_uuid()),
+                encode_duration_secs: Some(encode_duration_secs),
+                gain_bytes: Some(gain_bytes),
+                ..Default::default()
+            },
+        }
+    }
 }

@@ -1,45 +1,38 @@
-# rankode
+# rankode 🎬
 
-HEVC re-encoding queue processor. Scans media directories, extracts technical metadata via ffprobe, enriches with movie metadata via Radarr, and decides whether to re-encode files to HEVC based on compression potential.
+> **A deliberately over-engineered HEVC re-encoding queue processor.**
+>
+> This project is a learning lab — an excuse to explore **Domain-Driven Design**, idiomatic **Rust**, and **PostgreSQL as a pseudo-event bus** while building something concrete and useful. Expect hexagonal architecture where a simple script would do. That's the point.
+
+---
+
+## What it does
+
+rankode scans your media library, extracts technical metadata via `ffprobe`, enriches files with movie info from Radarr, and decides whether re-encoding to HEVC is worthwhile — based on compression potential and IMDb rating.
+
+PostgreSQL plays a dual role: **persistent storage** and **message queue** via `NOTIFY`/`LISTEN`. A trigger fires `pg_notify` on every event insert; workers pick it up and dispatch the next step.
+
+---
 
 ## Quick Start
 
 ```bash
-# Run database migrations
+# 1. Run database migrations
 cargo run -- migrate
 
-# Scan a directory
+# 2. Scan a media directory
 cargo run -- scan /path/to/media
 
-# Start watching for new files (dry run)
+# 3. Watch for events (dry run — no actual transcoding)
 cargo run -- watch --dry-run
 
-# Start watching for new files (live)
+# 4. Watch for events (live)
 cargo run -- watch
 ```
 
-## Configuration
+---
 
-Set environment variables before running:
-
-```bash
-# Database
-export DB_SOCKET_DIR=/tmp    # or use DB_HOST/DB_PORT for TCP
-export DB_NAME=rankode
-
-# Radarr (required)
-export RADARR_URL=http://localhost:7878
-export RADARR_API_KEY=your_api_key
-
-# Transcoding thresholds (optional)
-export RANKODE_MIN_FILE_SIZE_GB=2.0
-export RANKODE_MIN_BITS_PER_PIXEL=0.04
-export RANKODE_MIN_COMPRESSION_POTENTIAL=1.0
-```
-
-## Architecture
-
-PostgreSQL is used as both persistent storage and message queue via `NOTIFY`/`LISTEN`.
+## How it works
 
 ```
 ┌─────────┐     ┌──────────────┐     ┌─────────┐
@@ -50,112 +43,65 @@ PostgreSQL is used as both persistent storage and message queue via `NOTIFY`/`LI
               ┌──────────────────┐  ┌─────────────────┐
               │     events       │  │   Radarr API    │
               └──────────────────┘  └─────────────────┘
-                       ▲
                        │
+                       ▼
               ┌──────────────────┐
-              │ PostgresListener │
+              │  PostgresListener│  ◀── NOTIFY/LISTEN
               └──────────────────┘
 ```
 
-PostgreSQL triggers emit `pg_notify` on INSERT to `events` table, workers listen via `PostgresListener`.
-
-## Project Structure
+### File lifecycle
 
 ```
-src/
-├── main.rs                    # Entry point, dependency wiring
-├── cli.rs                     # Command enum with clap derive
-├── domain/
-│   ├── ports.rs               # Traits: FetchedLibraryItemOrchestrator, LibraryItemProvider,
-│   │                          #   EventListener, MediaFileAnalyzer, FileScanner, repositories
-│   ├── models/
-│   │   ├── mod.rs
-│   │   ├── media_file.rs      # MediaFile, MediaFileStatus, VideoCodec
-│   │   ├── library_item.rs    # LibraryItem
-│   │   └── event.rs          # Event, EventType, EventNotification, SkipReason
-│   └── services/
-│       ├── mod.rs
-│       ├── scan_folder.rs           # ScanFolderUseCase (8 concurrent analyses)
-│       ├── watch_events.rs          # WatchEventUseCase (event dispatcher)
-│       ├── process_discovered.rs    # ProcessDiscoveredFileUseCase → Radarr lookup
-│       ├── process_fetched.rs       # ProcessFetchedLibraryItemUseCase → decision maker
-│       └── take_decision.rs        # TakeTranscodeDecisionUseCase, crf_from_rating_and_bpp()
-└── infra/
-    ├── config.rs              # Config::from_env() - all environment variables
-    ├── ffmpeg/
-    │   ├── mod.rs
-    │   ├── models.rs          # FfprobeOutput, FfprobeStream, FfprobeFormat
-    │   └── probe.rs           # Ffprobe, MediaFileAnalyzer impl
-    ├── http/
-    │   ├── mod.rs
-    │   ├── radarr.rs          # RadarrProvider, LibraryItemProvider impl
-    │   └── models.rs          # RadarrMovie, RadarrRatings
-    ├── listener/
-    │   ├── mod.rs
-    │   ├── postgres_listener.rs  # PostgresEventListener, EventListener impl
-    │   └── models.rs             # NotificationPayload, PgEventType
-    ├── repository/
-    │   ├── mod.rs
-    │   ├── models.rs          # MediaFileRow, LibraryItemRow, UpsertResult<T>
-    │   ├── media_file.rs      # insert_media_file_inner, link_to_library_item_inner
-    │   ├── library_item.rs    # insert_library_item_inner, LibraryItemRepository
-    │   ├── event.rs           # insert_event_inner, EventRepository
-    │   └── orchestrator.rs    # PostgresRepository (all trait impls)
-    └── scanner/
-        ├── mod.rs
-        └── tokio.rs           # TokioScanner (FileScanner impl), VIDEO_EXTENSIONS
-
-migrations/
-└── 1_init.sql                 # PostgreSQL schema
+active → pending      (transcode queued)
+       → transcoding  (encoding in progress)
+       → transcoded   (done ✓)
+       → disappeared  (file gone during scan)
 ```
 
-## File Status Flow
+### Event flow
 
-```
-active → pending    (transcode decision made, queued for encoding)
-     → transcoding  (encoding in progress)
-     → transcoded   (successful HEVC encode)
-     → disappeared  (file missing during scan)
-```
+| Stage | Events |
+|-------|--------|
+| 🔍 Scan | `file_discovered`, `file_updated`, `file_disappeared` |
+| 📡 Metadata | `metadata_fetched`, `metadata_fetch_failed` |
+| 🎞️ Transcode | `transcode_decision_approved`, `transcode_decision_skipped`, `transcode_started`, `transcode_completed`, `transcode_failed` |
 
-## Events (events table)
+---
 
-**Scan**: `file_discovered`, `file_updated`, `file_disappeared`
-**Watch/Metadata**: `metadata_fetched`, `metadata_fetch_failed`
-**Watch/Transcode**: `transcode_analyzed`, `transcode_skipped`, `transcode_started`, `transcode_completed`, `transcode_failed`
-
-## CLI Commands
+## CLI Reference
 
 ### `rankode migrate`
-Runs SQLx migrations against the PostgreSQL database.
+Runs SQLx migrations against the configured PostgreSQL database.
 
 ### `rankode scan [PATH]`
-Scans directory recursively (default: `.`), inserts new files and updates `last_seen_at` on existing ones.
-- Files not found in scan but present in DB → marked `disappeared`
-- Emits `file_discovered` event for new files via PostgreSQL notify trigger
-- Runs up to **8 concurrent analyses**
+Recursively scans a directory (default: `.`) for video files.
+- New files are inserted and analyzed
+- Existing files get `last_seen_at` updated
+- Missing files are marked `disappeared`
+- Runs up to **8 concurrent ffprobe analyses**
 
 ### `rankode watch [--dry-run] [--scan PATH]`
-- `--dry-run`: If true, do not transcode pending files
-- `--scan`: Optionally run a scan first before watching
-- Listens to PostgreSQL NOTIFY events and dispatches to workers (up to **8 concurrent**)
-- Handles `file_discovered` and `metadata_fetched` events
+Listens for PostgreSQL `NOTIFY` events and dispatches workers.
+- `--dry-run` — analyze everything but skip actual transcoding
+- `--scan PATH` — run a scan pass before entering watch mode
+- Up to **8 concurrent workers**
 
-## Video Extensions Supported
+---
 
-`mp4`, `mkv`, `avi`, `mov`, `mpeg`, `mpg`
+## Compression Analysis 📊
 
-## Compression Analysis
-
-Files are analyzed based on `bits_per_pixel` (bitrate / pixels_per_second) and IMDb rating:
+Files are skipped if they don't pass the minimum thresholds. For eligible files, compression potential is computed as:
 
 ```
-compression_potential = (bits_per_pixel - 0.04) * 10 * resolution_factor
+compression_potential = (bits_per_pixel - 0.04) × 10 × resolution_factor
 ```
 
-Where `resolution_factor` is 3.0 (4K ≥ 3840×2160), 1.5 (1080p ≥ 1920×1080), 1.0 (720p ≥ 1280×720), 0.6 (other).
+`resolution_factor`: **3.0** (4K), **1.5** (1080p), **1.0** (720p), **0.6** (other)
 
-CRF is determined by IMDb rating (better movies = lower CRF) adjusted by bits_per_pixel.
+### CRF selection
+
+CRF is tuned by IMDb rating (better films = lower CRF = higher quality) with a fine-grained bpp adjustment:
 
 | IMDb Rating | Base CRF | bpp ≥ 0.15 | bpp ≥ 0.08 | bpp ≥ 0.05 | bpp < 0.05 |
 |-------------|----------|------------|------------|------------|------------|
@@ -164,30 +110,62 @@ CRF is determined by IMDb rating (better movies = lower CRF) adjusted by bits_pe
 | ≥ 4.0       | 26       | 25         | 26         | 27         | 28         |
 | < 4.0       | 28       | 27         | 28         | 29         | 30         |
 
-### SkipReason enum
-`CodecNotH264`, `FileTooSmall`, `AlreadyCompressed`, `InsufficientCompressionPotential`, `AlreadyTranscoded`, `FileDisappeared`, `TranscodeInProgress`
+### Skip reasons
 
-## Configuration Thresholds
+`CodecNotH264` · `FileTooSmall` · `AlreadyCompressed` · `InsufficientCompressionPotential` · `AlreadyTranscoded` · `FileDisappeared` · `TranscodeInProgress`
+
+---
+
+## Encoding 🖥️
+
+Platform-specific encoders are selected automatically:
+
+| Platform | Encoder |
+|----------|---------|
+| macOS (Apple Silicon) | `hevc_videotoolbox` |
+| Linux + NVIDIA | `hevc_nvenc` |
+| Fallback | `libx265` |
+
+---
+
+## Configuration
+
+### Database
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RANKODE_MIN_FILE_SIZE_GB` | 2.0 | Minimum file size to consider |
-| `RANKODE_MIN_BITS_PER_PIXEL` | 0.04 | Files below this are considered already compressed |
-| `RANKODE_MIN_COMPRESSION_POTENTIAL` | 1.0 | Minimum compression potential to transcode |
+| `DB_SOCKET_DIR` | — | Unix socket directory (overrides TCP) |
+| `DB_HOST` | `localhost` | PostgreSQL host |
+| `DB_PORT` | `5433` | PostgreSQL port |
+| `DB_USER` | `$USER` | Database user |
+| `DB_PASSWORD` | — | Database password |
+| `DB_NAME` | `rankode` | Database name |
 
-## Encoding
+### Radarr
 
-### Platform-specific Encoders
-- **macOS**: `hevc_videotoolbox` (Apple Silicon)
-- **Linux NVIDIA**: `hevc_nvenc`
-- **Fallback**: `libx265`
+| Variable | Description |
+|----------|-------------|
+| `RADARR_URL` | e.g. `http://localhost:7878` |
+| `RADARR_API_KEY` | Your Radarr API key |
+
+### Thresholds
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RANKODE_MIN_FILE_SIZE_GB` | `2.0` | Files below this size are skipped |
+| `RANKODE_MIN_BITS_PER_PIXEL` | `0.04` | Files below this bpp are already compressed |
+| `RANKODE_MIN_COMPRESSION_POTENTIAL` | `1.0` | Minimum potential to trigger transcode |
+
+---
 
 ## Prerequisites
 
-- `ffprobe` (part of ffmpeg) — `brew install ffmpeg` on macOS
-- PostgreSQL database accessible
+- **ffprobe** — `brew install ffmpeg` on macOS
+- **PostgreSQL** — accessible via TCP or Unix socket
 
-## Common Development Tasks
+---
+
+## Dev Commands
 
 | Task | Command |
 |------|---------|
@@ -196,6 +174,14 @@ CRF is determined by IMDb rating (better movies = lower CRF) adjusted by bits_pe
 | Test | `cargo test` |
 | Lint | `cargo clippy --all-targets` |
 | Format | `cargo fmt --all` |
+
+---
+
+## Supported Extensions
+
+`mp4` · `mkv` · `avi` · `mov` · `mpeg` · `mpg`
+
+---
 
 ## License
 

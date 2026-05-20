@@ -1,5 +1,5 @@
 use crate::{
-    domain::{ScanFolderUseCase, WatchEventUseCase},
+    application::{ScanFolderUseCase, WatchEventUseCase},
     infra::PostgressRepository,
 };
 use anyhow::Result;

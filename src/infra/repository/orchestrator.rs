@@ -1,11 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use sqlx::PgPool;
 use tracing::{debug, error, instrument};
 
+use crate::infra::repository::error::RepositoryError;
 use crate::domain::{
-    Event, FetchedLibraryItemOrchestrator, FileDiscoveryOrchestrator, LibraryItem,
-    MediaFileStatus, NewMediaFile, SavingFileResult, TranscodeDecisionOrchestrator,
+    DomainEvent, FetchedLibraryItemOrchestrator, FileDiscoveryOrchestrator, LibraryItem, MediaFile,
+    MediaFileId, MediaFileStatus, SavingFileResult, TranscodeDecisionOrchestrator,
 };
 use crate::infra::repository::event::insert_event_inner;
 use crate::infra::repository::library_item::insert_library_item_inner;
@@ -26,32 +27,35 @@ impl PostgressRepository {
         sqlx::migrate!()
             .run(&self.pool)
             .await
-            .context("Postgres migration failed")
+            .map_err(RepositoryError::Migration)
+            .map_err(Into::into)
     }
 }
 
 #[async_trait]
 impl FileDiscoveryOrchestrator for PostgressRepository {
-    #[instrument(skip(self), err)]
+    #[instrument(skip(self, media_file), err, fields(filename = %media_file.filename.0))]
     async fn save_discovered_file_and_event(
         &self,
-        media_file: NewMediaFile,
+        media_file: MediaFile,
     ) -> Result<SavingFileResult> {
         let mut result = SavingFileResult::Skipped;
         let mut tx = self.pool.begin().await?;
 
         match insert_media_file_inner(&mut *tx, &media_file).await {
             Ok(UpsertResult::AlreadyExists(_)) => {
-                debug!(filename = %media_file.file_name, "File already exists, skipping");
+                debug!("File already exists, skipping");
             }
-            Ok(UpsertResult::Inserted(media_file_id)) => {
-                debug!(filename = %media_file.file_name, "New file inserted");
-                let event = Event::file_discovered(media_file_id);
+            Ok(UpsertResult::Inserted(_)) => {
+                debug!("New file inserted");
+                let event = DomainEvent::FileDiscovered {
+                    media_file_id: media_file.id,
+                };
                 insert_event_inner(&mut *tx, event).await?;
                 result = SavingFileResult::Added;
             }
             Err(_) => {
-                error!(filename = %media_file.file_name, "Failed to insert file");
+                error!("Failed to insert file");
                 tx.rollback().await?;
                 return Ok(result);
             }
@@ -64,43 +68,54 @@ impl FileDiscoveryOrchestrator for PostgressRepository {
 
 #[async_trait]
 impl FetchedLibraryItemOrchestrator for PostgressRepository {
-    #[instrument(skip(self), err)]
-    async fn attach_metadata(&self, media_file_id: i64, library_item: LibraryItem) -> Result<()> {
+    #[instrument(skip(self, library_item),err, fields(media_file_id, library_item_id = %library_item.id.as_uuid()))]
+    async fn attach_metadata(
+        &self,
+        media_file_id: &MediaFileId,
+        library_item: LibraryItem,
+    ) -> Result<()> {
         debug!("Save library item, link it and save metadata_fetched_event");
 
         let mut tx = self.pool.begin().await?;
 
         let library_item_id = insert_library_item_inner(&mut *tx, library_item).await?;
-        link_to_library_item_inner(&mut *tx, media_file_id, library_item_id).await?;
+        link_to_library_item_inner(&mut *tx, media_file_id, &library_item_id).await?;
 
-        let event = Event::metadata_fetched(library_item_id);
+        let event = DomainEvent::MetadataFetched { library_item_id };
         insert_event_inner(&mut *tx, event).await?;
 
-        tx.commit().await.context("Failed to commit transaction")
+        tx.commit().await.map_err(RepositoryError::Database).map_err(Into::into)
+    }
+
+    async fn save_fetch_failed(&self, media_file_id: MediaFileId, error: String) -> Result<()> {
+        let event = DomainEvent::MetadataFetchFailed {
+            media_file_id,
+            error,
+        };
+
+        insert_event_inner(&self.pool, event).await.map_err(Into::into)
     }
 }
 
 #[async_trait]
 impl TranscodeDecisionOrchestrator for PostgressRepository {
     #[instrument(skip(self), err)]
-    async fn save_decision_and_events(
+    async fn save_decision(
         &self,
-        file_id: Option<i64>,
+        file_id: &MediaFileId,
         file_status: Option<MediaFileStatus>,
-        events: Vec<Event>,
+        event: DomainEvent,
     ) -> Result<()> {
         debug!("Insert events and update file status if needed");
 
         let mut tx = self.pool.begin().await?;
 
-        if let (Some(id), Some(status)) = (file_id, file_status) {
-            update_file_status_inner(&mut *tx, status, id).await?;
+        if let Some(status) = file_status {
+            update_file_status_inner(&mut *tx, status, file_id).await?;
         }
 
-        for event in events {
-            insert_event_inner(&mut *tx, event).await?;
-        }
+        insert_event_inner(&mut *tx, event).await?;
 
-        tx.commit().await.context("Failed to commit transaction")
+        tx.commit().await.map_err(RepositoryError::Database).map_err(Into::into)
     }
 }

@@ -4,7 +4,6 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
 use async_trait::async_trait;
 use tokio::{
     fs::read_dir,
@@ -16,7 +15,10 @@ use tokio::{
 };
 use tracing::{debug, error, instrument};
 
-use crate::domain::FileScanner;
+use crate::{
+    domain::{FileScanner, ScannedFile},
+    infra::scanner::error::ScannerError,
+};
 
 const CHANNEL_CAPACITY: usize = 1_024;
 const MAX_CONCURRENT_DIRS: usize = 64;
@@ -27,9 +29,10 @@ pub struct TokioScanner;
 #[async_trait]
 impl FileScanner for TokioScanner {
     #[instrument(skip(self))]
-    async fn start_scan(&self, to_scan: PathBuf) -> Receiver<PathBuf> {
-        let (tx, rx) = channel::<PathBuf>(CHANNEL_CAPACITY);
+    async fn start_scan(&self, to_scan: PathBuf) -> Receiver<ScannedFile> {
+        let (tx, rx) = channel::<ScannedFile>(CHANNEL_CAPACITY);
         let sem = Arc::new(Semaphore::new(MAX_CONCURRENT_DIRS));
+
         tokio::spawn(Self::handle_dirs(tx, to_scan, sem));
         rx
     }
@@ -37,17 +40,15 @@ impl FileScanner for TokioScanner {
 
 impl TokioScanner {
     #[instrument(skip(tx, sem))]
-    async fn handle_dirs(tx: Sender<PathBuf>, root_dir: PathBuf, sem: Arc<Semaphore>) {
+    async fn handle_dirs(tx: Sender<ScannedFile>, root_dir: PathBuf, sem: Arc<Semaphore>) {
         let mut set = JoinSet::new();
 
-        // scan root dir first
         set.spawn(Self::scan_dir(tx.clone(), root_dir, sem.clone()));
 
         while let Some(result) = set.join_next().await {
             match result {
                 Ok(Ok(subdirs)) => {
                     for dir in subdirs {
-                        // then one task per subdir
                         set.spawn(Self::scan_dir(tx.clone(), dir, sem.clone()));
                     }
                 }
@@ -58,10 +59,10 @@ impl TokioScanner {
     }
 
     async fn scan_dir(
-        tx: Sender<PathBuf>,
+        tx: Sender<ScannedFile>,
         dir: PathBuf,
         sem: Arc<Semaphore>,
-    ) -> Result<Vec<PathBuf>> {
+    ) -> Result<Vec<PathBuf>, ScannerError> {
         let _permit = sem.acquire().await?;
         let mut subdirs = Vec::with_capacity(16);
         let mut entries = read_dir(&dir).await?;
@@ -73,7 +74,8 @@ impl TokioScanner {
             if file_type.is_dir() {
                 subdirs.push(path);
             } else if is_video_file(file_type, &path) {
-                tx.send(path).await?;
+                let scanned_file: ScannedFile = path.try_into()?;
+                tx.send(scanned_file).await?;
             }
         }
 

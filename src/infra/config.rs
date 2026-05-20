@@ -7,8 +7,8 @@ pub struct Config {
     pub radarr_api_key: String,
     // Transcoding thresholds
     pub min_file_size_gb: f64,
-    pub min_bits_per_pixel: f32,
-    pub min_compression_potential: f32,
+    pub min_bits_per_pixel: f64,
+    pub min_compression_potential: f64,
 }
 
 impl Config {

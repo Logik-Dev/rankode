@@ -30,9 +30,11 @@
             pkgs.cargo
             pkgs.rustc
             pkgs.clippy
-            pkgs.rustfmt
             pkgs.ffmpeg
             pkgs.postgresql_16
+            pkgs.rustfmt
+            pkgs.rust-analyzer
+            pkgs.tree-sitter
           ];
 
           shellHook = ''

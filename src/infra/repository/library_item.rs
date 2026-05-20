@@ -1,33 +1,37 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use sqlx::{Executor, Postgres, query, query_as};
 use tracing::{debug, instrument};
 
 use crate::{
-    domain::{LibraryItem, LibraryItemRepository},
-    infra::{PostgressRepository, repository::models::LibraryItemRow},
+    domain::{LibraryItem, LibraryItemId, LibraryItemRepository},
+    infra::{PostgressRepository, repository::{error::RepositoryError, models::LibraryItemRow}},
 };
 
 #[async_trait]
 impl LibraryItemRepository for PostgressRepository {
-    #[instrument(skip(self), err)]
-    async fn find_library_item_by_id(&self, id: i64) -> Result<LibraryItem> {
+    #[instrument(skip(self, id), err, fields(library_item_id = % id.as_uuid()))]
+    async fn find_library_item_by_id(&self, id: &LibraryItemId) -> Result<LibraryItem> {
         debug!("Select library item by id");
 
-        query_as!(
+        let row = query_as!(
             LibraryItemRow,
             "SELECT * FROM library_items WHERE id = $1",
-            id
+            id.as_uuid()
         )
         .fetch_one(&self.pool)
         .await
-        .context("Failed to select library item found")
-        .map(Into::into)
+        .map_err(|e| RepositoryError::from_sqlx(e, RepositoryError::LibraryItemNotFound))?;
+
+        Ok(row.into())
     }
 }
 
-#[instrument(skip(executor), err)]
-pub(super) async fn insert_library_item_inner<'e, E>(executor: E, item: LibraryItem) -> Result<i64>
+#[instrument(skip(executor, item), err, fields(title = %item.title))]
+pub(super) async fn insert_library_item_inner<'e, E>(
+    executor: E,
+    item: LibraryItem,
+) -> Result<LibraryItemId, RepositoryError>
 where
     E: Executor<'e, Database = Postgres>,
 {
@@ -35,11 +39,12 @@ where
 
     query!(
         r#"
-            INSERT INTO library_items (title, year, imdb_id, genres, overview, imdb_rating)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO library_items (id, title, year, imdb_id, genres, overview, imdb_rating)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT(imdb_id) DO UPDATE SET imdb_id = EXCLUDED.imdb_id
             RETURNING id
         "#,
+        item.id.as_uuid(),
         item.title,
         item.year,
         item.imdb_id,
@@ -49,6 +54,6 @@ where
     )
     .fetch_one(executor)
     .await
-    .context("Failed to insert library item")
-    .map(|r| r.id)
+    .map_err(RepositoryError::Database)
+    .map(|r| r.id.into())
 }

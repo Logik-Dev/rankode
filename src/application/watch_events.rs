@@ -4,9 +4,9 @@ use anyhow::Result;
 use futures::{StreamExt, stream::FuturesUnordered};
 use tracing::{error, instrument};
 
-use crate::domain::{
-    EventListener, EventNotification, EventType, ProcessDiscoveredFileUseCase,
-    ProcessFetchedLibraryItemUseCase,
+use crate::{
+    application::{ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase},
+    domain::{EventListener, WorkerSignal},
 };
 
 pub struct WatchEventUseCase {
@@ -62,14 +62,19 @@ impl WatchEventUseCase {
 
 async fn dispatch_event(
     dry_run: bool,
-    notif: EventNotification,
+    signal: WorkerSignal,
     discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
     process_fetched_use_case: Arc<ProcessFetchedLibraryItemUseCase>,
 ) -> Result<()> {
-    match notif.event_type {
-        EventType::FileDiscovered => discovered_file_use_case.execute(notif.id).await?,
-        EventType::MetadataFetched => process_fetched_use_case.execute(notif.id, dry_run).await?,
-        _ => todo!(),
+    match signal {
+        WorkerSignal::FileDiscovered(media_file_id) => {
+            discovered_file_use_case.execute(media_file_id).await?
+        }
+        WorkerSignal::MetadataFetched(library_item_id) => {
+            process_fetched_use_case
+                .execute(library_item_id, dry_run)
+                .await?
+        }
     }
 
     Ok(())

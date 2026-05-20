@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::domain::LibraryItem;
+use crate::domain::{LibraryItem, LibraryItemId};
 
 #[derive(Deserialize)]
 pub(super) struct RadarrMovie {
@@ -24,16 +24,19 @@ struct RadarrRatingValue {
     value: Option<f32>,
 }
 
-impl From<RadarrMovie> for LibraryItem {
-    fn from(m: RadarrMovie) -> Self {
-        LibraryItem {
-            id: None,
+impl TryFrom<RadarrMovie> for LibraryItem {
+    type Error = ();
+
+    fn try_from(m: RadarrMovie) -> Result<Self, Self::Error> {
+        let imdb_id = m.imdb_id.ok_or(())?;
+        Ok(LibraryItem {
+            id: LibraryItemId::default(),
             title: m.title,
             year: m.year,
-            imdb_id: m.imdb_id,
+            imdb_id,
             imdb_rating: m.ratings.and_then(|r| r.imdb).and_then(|r| r.value),
             genres: m.genres,
             overview: m.overview,
-        }
+        })
     }
 }

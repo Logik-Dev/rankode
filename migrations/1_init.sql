@@ -4,7 +4,7 @@
 
 -- Create library_items table
 CREATE TABLE library_items (
-    id                  BIGSERIAL     PRIMARY KEY,
+    id                  UUID          NOT NULL PRIMARY KEY,
     title               TEXT          NOT NULL,
     year                INTEGER,
     imdb_id             TEXT          NOT NULL UNIQUE,
@@ -17,9 +17,9 @@ CREATE TABLE library_items (
 CREATE INDEX idx_library_items_imdb_id ON library_items(imdb_id);
 
 CREATE TABLE media_files (
-    id                  BIGSERIAL    PRIMARY KEY,
-    library_item_id     BIGINT       REFERENCES library_items(id),
-    root_dir            TEXT         NOT NULL,
+    id                  UUID         NOT NULL PRIMARY KEY,
+    library_item_id     UUID       REFERENCES library_items(id),
+    root_dir            TEXT,        -- nullable: propagation à décider
     file_path           TEXT         NOT NULL UNIQUE,
     file_name           TEXT         NOT NULL,
     size_bytes          BIGINT       NOT NULL,
@@ -55,17 +55,17 @@ CREATE TABLE events (
     event_type          TEXT NOT NULL,
 
     -- anchoring: file OR library item, never both
-    media_file_id       BIGINT REFERENCES media_files(id),
-    library_item_id     BIGINT REFERENCES library_items(id),
+    media_file_id       UUID REFERENCES media_files(id),
+    library_item_id     UUID REFERENCES library_items(id),
 
     -- metrics
-    compression_potential  REAL,
-    bits_per_pixel         REAL,
-    crf                    INT,
+    compression_potential  DOUBLE PRECISION,
+    bits_per_pixel         DOUBLE PRECISION,
+    crf                    SMALLINT,
     skip_reason            TEXT,
 
     -- transcode result
-    dst_media_file_id      BIGINT REFERENCES media_files(id),
+    dst_media_file_id      UUID REFERENCES media_files(id),
     encode_duration_secs   INT,
     gain_bytes             BIGINT,
 

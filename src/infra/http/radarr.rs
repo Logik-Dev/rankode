@@ -1,11 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
 use tracing::{debug, instrument};
 
 use crate::{
     domain::{LibraryItem, LibraryItemProvider},
-    infra::http::models::RadarrMovie,
+    infra::http::{error::RadarrError, models::RadarrMovie},
 };
 
 pub struct RadarrProvider {
@@ -42,8 +42,10 @@ impl LibraryItemProvider for RadarrProvider {
 
         movies
             .into_iter()
-            .next()
-            .map(Into::into)
-            .context(format!("Failed to fetch movie {filename}"))
+            .find_map(|m| m.try_into().ok())
+            .ok_or_else(|| RadarrError::NoResultWithImdbId {
+                filename: filename.to_string(),
+            })
+            .map_err(Into::into)
     }
 }

@@ -1,10 +1,12 @@
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::{StreamExt, stream::FuturesUnordered};
 use tracing::{error, info, instrument};
 
-use crate::domain::{FileDiscoveryOrchestrator, FileScanner, MediaFileAnalyzer, SavingFileResult};
+use crate::domain::{
+    FileDiscoveryOrchestrator, FileScanner, MediaFile, MediaFileAnalyzer, SavingFileResult,
+};
 
 #[derive(Clone)]
 pub struct ScanFolderUseCase {
@@ -32,7 +34,7 @@ impl ScanFolderUseCase {
         let start = Instant::now();
 
         let mut rx = self.scanner.start_scan(root_dir.clone()).await;
-        let root_dir = root_dir.to_str().context("Root directory invalid")?;
+        // TODO decide what to do with it let root_dir = root_dir.to_str().context("Root directory invalid")?;
 
         let mut added = 0u32;
         let mut skipped = 0u32;
@@ -43,13 +45,16 @@ impl ScanFolderUseCase {
         loop {
             tokio::select! {
                 // receive file and put processing in workers vec
-                Some(path) = rx.recv(), if workers.len() < MAX_CONCURRENT_ANALYSES => {
+                Some(scanned_file) = rx.recv(), if workers.len() < MAX_CONCURRENT_ANALYSES => {
                     let analyzer = self.analyzer.clone();
+
                     let repository = self.repository.clone();
 
                     workers.push(async move {
-                        let media_file = analyzer.probe(path, root_dir).await?;
+                        let video_properties = analyzer.probe(&scanned_file.path).await?;
+                        let media_file = MediaFile::from_scan(scanned_file, video_properties);
                         let added = repository.save_discovered_file_and_event(media_file).await?;
+
                         Ok::<SavingFileResult, anyhow::Error>(added)
                     });
                 }
