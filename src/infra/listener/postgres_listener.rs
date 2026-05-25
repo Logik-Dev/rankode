@@ -74,6 +74,17 @@ fn to_worker_signal(payload: NotificationPayload) -> Option<WorkerSignal> {
             })?;
             Some(WorkerSignal::MetadataFetched(id))
         }
+        "transcode_decision_approved" => {
+            let id = payload.media_file_id.map(MediaFileId::from).or_else(|| {
+                warn!("transcode_decision_approved event missing media_file_id");
+                None
+            })?;
+            let crf = payload.crf.or_else(|| {
+                warn!("transcode_decision_approved event missing crf");
+                None
+            })?;
+            Some(WorkerSignal::TranscodeApproved(id, crf))
+        }
         other => {
             debug!(event_type = other, "Unhandled event type, skipping");
             None

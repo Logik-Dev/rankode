@@ -85,7 +85,8 @@ BEGIN
         json_build_object(
             'event_type', NEW.event_type,
             'media_file_id', NEW.media_file_id,
-            'library_item_id', NEW.library_item_id
+            'library_item_id', NEW.library_item_id,
+            'crf', NEW.crf
         )::text
     );
     RETURN NEW;

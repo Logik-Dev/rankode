@@ -1,12 +1,14 @@
 mod codec;
 mod resolution;
 mod status;
+mod transcode;
 mod value_objects;
 mod video_properties;
 
 pub use codec::*;
 pub use resolution::*;
 pub use status::*;
+pub use transcode::*;
 pub use value_objects::*;
 pub use video_properties::*;
 

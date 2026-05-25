@@ -3,8 +3,22 @@ use crate::{
     infra::PostgressRepository,
 };
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::{path::PathBuf, sync::Arc};
+
+/// HEVC encoder to use for transcoding.
+#[derive(Debug, Clone, ValueEnum, Default)]
+pub enum EncoderArg {
+    /// Auto-detect the best available encoder.
+    #[default]
+    Auto,
+    /// Apple VideoToolbox (macOS / Apple Silicon).
+    Videotoolbox,
+    /// NVIDIA NVENC (Linux + NVIDIA GPU).
+    Nvenc,
+    /// Software encoder, available everywhere.
+    Libx265,
+}
 
 /// Scan media files, analyze them and fetch metadatas.
 /// Take decision to know if they should be transcoded.
@@ -24,14 +38,26 @@ pub enum Command {
         #[arg(long, short, default_value = "false")]
         dry_run: bool,
 
-        /// Do a scan of the given folder.
+        /// Do a scan of the given folder before watching.
         #[arg(long, short, default_value = None)]
         scan: Option<PathBuf>,
+
+        /// HEVC encoder to use for transcoding.
+        #[arg(long, default_value = "auto")]
+        encoder: EncoderArg,
     },
     // TODO Process,
 }
 
 impl Command {
+    /// Extracts the encoder arg before `execute` consumes `self`.
+    pub fn encoder_arg(&self) -> EncoderArg {
+        match self {
+            Command::Watch { encoder, .. } => encoder.clone(),
+            _ => EncoderArg::Auto,
+        }
+    }
+
     pub async fn execute(
         self,
         repository: Arc<PostgressRepository>,
@@ -41,7 +67,7 @@ impl Command {
         match self {
             Command::Migrate => repository.migrate().await,
             Command::Scan { path } => scanner.execute(path).await,
-            Command::Watch { dry_run, scan } => {
+            Command::Watch { dry_run, scan, .. } => {
                 if let Some(path) = scan {
                     tokio::spawn(async move {
                         let _ = scanner.execute(path).await;
@@ -49,8 +75,8 @@ impl Command {
                 }
 
                 tokio::select! {
-                    _watch_res = watcher.execute(dry_run) => {Ok(())},
-                    _ = tokio::signal::ctrl_c() => {Ok(())},
+                    _watch_res = watcher.execute(dry_run) => { Ok(()) },
+                    _ = tokio::signal::ctrl_c() => { Ok(()) },
                 }
             }
         }

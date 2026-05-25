@@ -76,9 +76,10 @@ where
         .map(|f| f.as_f64())
         .unwrap_or(0.0);
 
+    let status = media_file.status.as_str();
     let row = sqlx::query!(
         "INSERT INTO media_files (id, file_path, file_name, size_bytes, video_codec, height, width, framerate, bitrate_kbps, status, last_seen_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
             ON CONFLICT (file_path) DO UPDATE SET last_seen_at = NOW()
             RETURNING (xmax = 0) as inserted",
         id,
@@ -90,6 +91,7 @@ where
         width,
         framerate,
         bitrate_kbps,
+        status,
     )
     .fetch_one(executor)
     .await?;

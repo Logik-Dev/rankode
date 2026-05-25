@@ -5,7 +5,10 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use tracing::{error, instrument};
 
 use crate::{
-    application::{ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase},
+    application::{
+        ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase,
+        transcode_file::TranscodeFileUseCase,
+    },
     domain::{EventListener, WorkerSignal},
 };
 
@@ -13,6 +16,7 @@ pub struct WatchEventUseCase {
     listener: Arc<dyn EventListener>,
     discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
     process_fetched_use_case: Arc<ProcessFetchedLibraryItemUseCase>,
+    transcode_file_use_case: Arc<TranscodeFileUseCase>,
 }
 
 impl WatchEventUseCase {
@@ -20,11 +24,13 @@ impl WatchEventUseCase {
         listener: Arc<dyn EventListener>,
         discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
         process_fetched_use_case: Arc<ProcessFetchedLibraryItemUseCase>,
+        transcode_file_use_case: Arc<TranscodeFileUseCase>,
     ) -> Self {
         Self {
             listener,
             discovered_file_use_case,
             process_fetched_use_case,
+            transcode_file_use_case,
         }
     }
 
@@ -41,8 +47,9 @@ impl WatchEventUseCase {
                 Some(notif) = rx.recv(), if workers.len() < MAX_CONCURRENT_WORKERS => {
                     let discovered_file_use_case = self.discovered_file_use_case.clone();
                     let process_fetched_use_case = self.process_fetched_use_case.clone();
+                    let transcode_file_use_case = self.transcode_file_use_case.clone();
 
-                    workers.push(dispatch_event(dry_run, notif, discovered_file_use_case, process_fetched_use_case));
+                    workers.push(dispatch_event(dry_run, notif, discovered_file_use_case, process_fetched_use_case, transcode_file_use_case));
 
                 }
                 Some(result) = workers.next() => {
@@ -65,6 +72,7 @@ async fn dispatch_event(
     signal: WorkerSignal,
     discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
     process_fetched_use_case: Arc<ProcessFetchedLibraryItemUseCase>,
+    transcode_file_use_case: Arc<TranscodeFileUseCase>,
 ) -> Result<()> {
     match signal {
         WorkerSignal::FileDiscovered(media_file_id) => {
@@ -74,6 +82,9 @@ async fn dispatch_event(
             process_fetched_use_case
                 .execute(library_item_id, dry_run)
                 .await?
+        }
+        WorkerSignal::TranscodeApproved(media_file_id, crf) => {
+            transcode_file_use_case.execute(&media_file_id, crf).await?
         }
     }
 

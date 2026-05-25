@@ -1,6 +1,7 @@
 mod process_discovered;
 mod process_fetched;
 mod scan_folder;
+pub mod transcode_file;
 mod watch_events;
 
 pub use process_discovered::ProcessDiscoveredFileUseCase;

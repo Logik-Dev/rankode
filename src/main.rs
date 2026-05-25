@@ -14,12 +14,13 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 use crate::{
     application::{
         ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase, ScanFolderUseCase,
-        WatchEventUseCase,
+        WatchEventUseCase, transcode_file::TranscodeFileUseCase,
     },
     cli::Command,
     domain::TakeTranscodeDecisionService,
     infra::{
-        Config, Ffprobe, PostgresEventListener, PostgressRepository, RadarrProvider, TokioScanner,
+        Config, FfmpegTranscoder, Ffprobe, PostgresEventListener, PostgressRepository,
+        RadarrProvider, TokioScanner,
     },
 };
 
@@ -71,11 +72,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         postgres_repo.clone(),
     ));
 
-    // Watch triggered notifications when an event is inserted
+    let encoder_arg = cmd.encoder_arg();
+    let ffmpeg_transcoder = Arc::new(FfmpegTranscoder::build(encoder_arg).await);
+
+    let transcode_file_use_case = Arc::new(TranscodeFileUseCase::new(
+        postgres_repo.clone(),
+        ffprobe_analyzer.clone(),
+        postgres_repo.clone(),
+        ffmpeg_transcoder,
+    ));
+
     let watch_use_case = WatchEventUseCase::new(
         postgres_listener,
         process_discovered_use_case.clone(),
         process_fetched_use_case.clone(),
+        transcode_file_use_case,
     );
 
     if cmd
