@@ -183,6 +183,84 @@ Platform-specific encoders are selected automatically:
 
 ---
 
+## Roadmap
+
+Ideas explored during development, kept here as a backlog.
+
+### `rankode report` — transcode savings estimator
+
+After a scan, display a summary of files pending transcode sorted by estimated gain:
+
+```
+12 files pending — 847 GB total
+Estimated gain: ~420 GB (50%)
+
+File                         Size      → Estimated   Gain
+The Dark Knight (2160p)      45.2 GB   → 18.1 GB     -27 GB
+Inception (1080p)            28.4 GB   → 12.2 GB     -16 GB
+...
+```
+
+Estimation formula: `estimated_size = current_size × (0.04 / bits_per_pixel)`, using the bpp threshold already computed during the transcode decision.
+
+### Human approval before transcoding
+
+A new `awaiting_approval` status between `active` and `pending`. Files would wait for explicit validation before being queued. Possible approval mechanisms:
+
+- `rankode approve <id>` / `rankode approve --all` — CLI validation
+- Telegram / Discord bot — push notification with inline approve/reject buttons
+- Home Assistant + voice (see MCP section below)
+
+### MCP server — universal control interface
+
+Rankode exposes an MCP server. Any MCP-compatible client (Claude, Home Assistant, scripts) can interact with the queue via typed tools:
+
+```
+list_pending()           → pending files with gain estimates
+approve(id)              → queue a file for transcoding
+reject(id, reason)       → mark as skipped
+report()                 → global savings summary
+status()                 → running transcodes and progress
+```
+
+The MCP server acts as a **port** in the hexagonal architecture — domain use cases remain unchanged, the MCP layer is just another adapter.
+
+### Voice control via Home Assistant + MCP
+
+Home Assistant supports Claude as a conversation agent. With rankode's MCP server registered, voice commands become possible:
+
+```
+"Hey Siri, tell Home Assistant to approve the Dark Knight transcode"
+         ↓
+Home Assistant → Claude (conversation agent)
+         ↓
+Claude calls approve(id) via MCP tools
+         ↓
+PostgreSQL updated → worker starts transcoding
+```
+
+The MCP server becomes the single integration point — Alexa, Google Home, a mobile app, or a dashboard all go through the same tools without any changes to rankode's domain.
+
+### `rankode transcode <path>` — on-demand transcode
+
+Transcode a specific file immediately, with an estimate shown before starting:
+
+```
+File: The Dark Knight (2160p H264, 45.2 GB)
+Estimated output: ~18 GB  (-27 GB)
+Proceed? [y/N]
+```
+
+### Watch priority ordering
+
+Process files with the highest estimated gain first instead of insertion order, so that if a session is interrupted the most impactful transcodes are done first.
+
+### Prediction accuracy table
+
+A `predictions` table tracking `estimated_gain_bytes` vs actual `gain_bytes` from `transcode_completed` events — foundation for improving the estimation formula over time and building stats dashboards.
+
+---
+
 ## License
 
 MIT

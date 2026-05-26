@@ -3,6 +3,7 @@ mod ffmpeg;
 mod ffprobe;
 mod http;
 mod listener;
+pub mod mcp;
 mod repository;
 mod scanner;
 

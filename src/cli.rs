@@ -1,6 +1,6 @@
 use crate::{
     application::{ScanFolderUseCase, WatchEventUseCase},
-    infra::PostgressRepository,
+    infra::{mcp::server::run_mcp_server, PostgressRepository},
 };
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
@@ -45,6 +45,10 @@ pub enum Command {
         /// HEVC encoder to use for transcoding.
         #[arg(long, default_value = "auto")]
         encoder: EncoderArg,
+
+        /// Port for the MCP HTTP server.
+        #[arg(long, default_value = "3000")]
+        mcp_port: u16,
     },
     // TODO Process,
 }
@@ -67,7 +71,7 @@ impl Command {
         match self {
             Command::Migrate => repository.migrate().await,
             Command::Scan { path } => scanner.execute(path).await,
-            Command::Watch { dry_run, scan, .. } => {
+            Command::Watch { dry_run, scan, mcp_port, .. } => {
                 if let Some(path) = scan {
                     tokio::spawn(async move {
                         let _ = scanner.execute(path).await;
@@ -75,7 +79,8 @@ impl Command {
                 }
 
                 tokio::select! {
-                    _watch_res = watcher.execute(dry_run) => { Ok(()) },
+                    _watch = watcher.execute(dry_run) => { Ok(()) },
+                    _mcp = run_mcp_server(repository.clone(), mcp_port) => { Ok(()) },
                     _ = tokio::signal::ctrl_c() => { Ok(()) },
                 }
             }

@@ -6,7 +6,8 @@ use tokio::sync::mpsc::Receiver;
 
 use crate::domain::{
     AbsoluteFilePath, DomainEvent, LibraryItem, LibraryItemId, MediaFile, MediaFileId,
-    MediaFileStatus, SavingFileResult, ScannedFile, TranscodeOutput, VideoProperties, WorkerSignal,
+    MediaFileStatus, PendingTranscodeItem, SavingFileResult, ScannedFile, TranscodeOutput,
+    VideoProperties, WorkerSignal,
 };
 
 #[async_trait]
@@ -92,4 +93,9 @@ pub trait TranscodeLifecycleOrchestrator: Send + Sync {
 #[async_trait]
 pub trait Transcoder: Send + Sync {
     async fn transcode(&self, file_path: &AbsoluteFilePath, crf: u8) -> Result<TranscodeOutput>;
+}
+
+#[async_trait]
+pub trait PendingReportRepository: Send + Sync {
+    async fn list_pending(&self) -> Result<Vec<PendingTranscodeItem>>;
 }
