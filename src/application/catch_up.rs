@@ -16,22 +16,14 @@ impl CatchUpUseCase {
     }
 
     #[instrument(skip(self, tx), err, name = "catch_up")]
-    pub async fn execute(&self, dry_run: bool, tx: &Sender<WorkerSignal>) -> Result<()> {
+    pub async fn execute(&self, tx: &Sender<WorkerSignal>) -> Result<()> {
         let mut count = 0usize;
 
         for item in self.repository.find_queued_for_transcode().await? {
             if item.is_crashed {
-                // Crash recovery mutates state (re-queues a real transcode).
-                // In dry_run we only preview — no side effects.
-                if dry_run {
-                    continue;
-                }
                 warn!(media_file_id = ?item.media_file_id, "crash recovery: re-queuing interrupted transcode");
             }
-            // Preserve the original decision's dry_run flag: if the stored decision
-            // was already a dry_run, keep it even if the current run is not.
-            let effective_dry_run = item.dry_run || dry_run;
-            tx.send(WorkerSignal::TranscodeApproved(item.media_file_id, item.crf, effective_dry_run)).await?;
+            tx.send(WorkerSignal::TranscodeApproved(item.media_file_id, item.crf)).await?;
             count += 1;
         }
 

@@ -29,8 +29,9 @@ impl ProcessFetchedLibraryItemUseCase {
             decision_orchestrator,
         }
     }
+
     #[instrument(skip(self), err, name = "on_metadata_fetched")]
-    pub async fn execute(&self, library_item_id: LibraryItemId, dry_run: bool) -> Result<()> {
+    pub async fn execute(&self, library_item_id: LibraryItemId) -> Result<()> {
         let library_item = self
             .library_repository
             .find_library_item_by_id(&library_item_id)
@@ -52,20 +53,15 @@ impl ProcessFetchedLibraryItemUseCase {
                     compression_potential,
                     crf,
                 } => {
-                    // Invariant: status=Pending ↔ a real transcode is queued.
-                    // Catch-up relies on this to identify files that need recovery.
-                    if !dry_run {
-                        new_status = Some(MediaFileStatus::Pending);
-                    }
-                    DomainEvent::TranscodeDecisionApproved {
+                    new_status = Some(MediaFileStatus::Pending);
+                    DomainEvent::TranscodeScored {
                         media_file_id: file.id,
                         bpp,
                         compression_potential,
                         crf,
-                        dry_run,
                     }
                 }
-                TranscodeDecision::Skip(skip_reason) => DomainEvent::TranscodeDecisionSkipped {
+                TranscodeDecision::Skip(skip_reason) => DomainEvent::TranscodeIneligible {
                     media_file_id: file.id,
                     skip_reason,
                     compression_potential: None,
@@ -75,7 +71,7 @@ impl ProcessFetchedLibraryItemUseCase {
                     reason,
                     bpp,
                     compression_potential,
-                } => DomainEvent::TranscodeDecisionSkipped {
+                } => DomainEvent::TranscodeIneligible {
                     media_file_id: file.id,
                     skip_reason: reason,
                     bpp: Some(bpp),

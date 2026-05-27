@@ -12,5 +12,4 @@ pub struct QueuedTranscode {
     /// true when the file was in 'transcoding' state — the process crashed mid-encode
     pub is_crashed: bool,
     pub crf: u8,
-    pub dry_run: bool,
 }

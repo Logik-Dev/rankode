@@ -22,7 +22,7 @@ struct EventRecord {
     encode_duration_secs: Option<i32>,
     gain_bytes: Option<i64>,
     error_message: Option<String>,
-    dry_run: bool,
+    actor: Option<String>,
 }
 
 #[async_trait]
@@ -47,7 +47,7 @@ where
     let record = EventRecord::from(event);
 
     sqlx::query!(
-         "INSERT INTO events (event_type, media_file_id, library_item_id, compression_potential, bits_per_pixel, crf, skip_reason, dst_media_file_id, encode_duration_secs, gain_bytes, error_message, dry_run)
+         "INSERT INTO events (event_type, media_file_id, library_item_id, compression_potential, bits_per_pixel, crf, skip_reason, dst_media_file_id, encode_duration_secs, gain_bytes, error_message, actor)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           RETURNING id",
           record.event_type,
@@ -61,7 +61,7 @@ where
           record.encode_duration_secs,
           record.gain_bytes,
           record.error_message,
-          record.dry_run
+          record.actor
     )
         .fetch_one(executor)
         .await
@@ -91,32 +91,50 @@ impl From<DomainEvent> for EventRecord {
                 error_message: Some(error),
                 ..Default::default()
             },
-            DomainEvent::TranscodeDecisionApproved {
+            DomainEvent::TranscodeScored {
                 media_file_id,
                 bpp,
                 compression_potential,
                 crf,
-                dry_run,
             } => EventRecord {
-                event_type: "transcode_decision_approved",
+                event_type: "transcode_scored",
                 media_file_id: Some(media_file_id.as_uuid()),
                 bits_per_pixel: Some(bpp),
                 compression_potential: Some(compression_potential),
                 crf: Some(crf.into()),
-                dry_run,
                 ..Default::default()
             },
-            DomainEvent::TranscodeDecisionSkipped {
+            DomainEvent::TranscodeIneligible {
                 media_file_id,
                 skip_reason,
                 bpp,
                 compression_potential,
             } => EventRecord {
-                event_type: "transcode_decision_skipped",
+                event_type: "transcode_ineligible",
                 media_file_id: Some(media_file_id.as_uuid()),
                 skip_reason: Some(skip_reason.as_str()),
                 bits_per_pixel: bpp,
                 compression_potential,
+                ..Default::default()
+            },
+            DomainEvent::TranscodeApproved {
+                media_file_id,
+                approved_by,
+                crf,
+            } => EventRecord {
+                event_type: "transcode_approved",
+                media_file_id: Some(media_file_id.as_uuid()),
+                crf: Some(crf.into()),
+                actor: Some(approved_by),
+                ..Default::default()
+            },
+            DomainEvent::TranscodeRejected {
+                media_file_id,
+                rejected_by,
+            } => EventRecord {
+                event_type: "transcode_rejected",
+                media_file_id: Some(media_file_id.as_uuid()),
+                actor: Some(rejected_by),
                 ..Default::default()
             },
             DomainEvent::TranscodeStarted { media_file_id } => EventRecord {

@@ -5,6 +5,9 @@ use crate::domain::DomainError;
 #[derive(Debug, Clone, PartialEq, Copy)]
 pub enum MediaFileStatus {
     Active,
+    Candidate,
+    Approved,
+    Rejected,
     Pending,
     Transcoding,
     Transcoded,
@@ -17,6 +20,9 @@ impl FromStr for MediaFileStatus {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "active" => Ok(MediaFileStatus::Active),
+            "candidate" => Ok(MediaFileStatus::Candidate),
+            "approved" => Ok(MediaFileStatus::Approved),
+            "rejected" => Ok(MediaFileStatus::Rejected),
             "pending" => Ok(MediaFileStatus::Pending),
             "transcoding" => Ok(MediaFileStatus::Transcoding),
             "transcoded" => Ok(MediaFileStatus::Transcoded),
@@ -30,6 +36,9 @@ impl MediaFileStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             MediaFileStatus::Active => "active",
+            MediaFileStatus::Candidate => "candidate",
+            MediaFileStatus::Approved => "approved",
+            MediaFileStatus::Rejected => "rejected",
             MediaFileStatus::Pending => "pending",
             MediaFileStatus::Transcoding => "transcoding",
             MediaFileStatus::Disappeared => "disappeared",

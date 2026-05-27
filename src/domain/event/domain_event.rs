@@ -15,18 +15,26 @@ pub enum DomainEvent {
         media_file_id: MediaFileId,
         error: String,
     },
-    TranscodeDecisionApproved {
+    TranscodeScored {
         media_file_id: MediaFileId,
         bpp: f64,
         compression_potential: f64,
         crf: u8,
-        dry_run: bool,
     },
-    TranscodeDecisionSkipped {
+    TranscodeIneligible {
         media_file_id: MediaFileId,
         skip_reason: SkipReason,
         bpp: Option<f64>,
         compression_potential: Option<f64>,
+    },
+    TranscodeApproved {
+        media_file_id: MediaFileId,
+        approved_by: String,
+        crf: u8,
+    },
+    TranscodeRejected {
+        media_file_id: MediaFileId,
+        rejected_by: String,
     },
     TranscodeStarted {
         media_file_id: MediaFileId,

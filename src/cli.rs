@@ -27,17 +27,9 @@ pub enum EncoderArg {
 pub enum Command {
     /// Do postgresql schema migration.
     Migrate,
-    /// Scan a given folder to find new media files and ffprobe them.
-    Scan {
-        #[arg(default_value = ".")]
-        path: PathBuf,
-    },
+
     /// Watch for new events and execute associated actions.
     Watch {
-        /// If true do not transcode pending files.
-        #[arg(long, short, default_value = "false")]
-        dry_run: bool,
-
         /// Do a scan of the given folder before watching.
         #[arg(long, short, default_value = None)]
         scan: Option<PathBuf>,
@@ -70,13 +62,7 @@ impl Command {
     ) -> Result<()> {
         match self {
             Command::Migrate => repository.migrate().await,
-            Command::Scan { path } => scanner.execute(path).await,
-            Command::Watch {
-                dry_run,
-                scan,
-                mcp_port,
-                ..
-            } => {
+            Command::Watch { scan, mcp_port, .. } => {
                 if let Some(path) = scan {
                     tokio::spawn(async move {
                         let _ = scanner.execute(path).await;
@@ -84,7 +70,7 @@ impl Command {
                 }
 
                 tokio::select! {
-                    _watch = watcher.execute(dry_run) => { Ok(()) },
+                    _watch = watcher.execute() => { Ok(()) },
                     _mcp = run_mcp_server(repository.clone(), mcp_port) => { Ok(()) },
                     _ = tokio::signal::ctrl_c() => { Ok(()) },
                 }

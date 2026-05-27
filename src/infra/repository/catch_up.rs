@@ -12,8 +12,8 @@ impl CatchUpRepository for PostgressRepository {
     #[instrument(skip(self), err)]
     async fn find_unprocessed_active_files(&self) -> Result<Vec<UnprocessedFile>> {
         // transcode_decision_approved is intentionally absent from the exclusion list:
-        // a dry_run decision doesn't set status=pending, so the file stays active and
-        // must be re-evaluated on the next real run.
+        // a file can have a decision event but still need recovery (e.g. status reset
+        // to active after a failed transcode).
         let rows = sqlx::query!(
             r#"
             SELECT mf.id, mf.library_item_id
@@ -24,7 +24,7 @@ impl CatchUpRepository for PostgressRepository {
                 WHERE e.media_file_id = mf.id
                   AND e.event_type IN (
                     'metadata_fetch_failed',
-                    'transcode_decision_skipped',
+                    'transcode_ineligible',
                     'transcode_completed',
                     'transcode_failed'
                   )
@@ -50,11 +50,10 @@ impl CatchUpRepository for PostgressRepository {
             SELECT
                 mf.id,
                 mf.status,
-                e.crf,
-                e.dry_run
+                e.crf
             FROM media_files mf
             JOIN LATERAL (
-                SELECT crf, dry_run
+                SELECT crf
                 FROM events
                 WHERE media_file_id = mf.id AND event_type = 'transcode_decision_approved'
                 ORDER BY occurred_at DESC
@@ -76,7 +75,6 @@ impl CatchUpRepository for PostgressRepository {
                     media_file_id: MediaFileId::from(r.id),
                     is_crashed: r.status == "transcoding",
                     crf,
-                    dry_run: r.dry_run,
                 })
             })
             .collect())

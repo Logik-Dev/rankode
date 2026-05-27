@@ -24,7 +24,12 @@ impl TakeTranscodeDecisionService {
     pub fn execute(&self, file: &MediaFile, imdb_rating: Option<f32>) -> TranscodeDecision {
         debug!("Taking transcode decision");
 
-        if file.status == MediaFileStatus::Transcoding {
+        // Candidate = awaiting user approval; Approved = approval recorded but transcode not yet
+        // started; Transcoding = actively encoding. All three mean "don't re-queue this file".
+        if matches!(
+            file.status,
+            MediaFileStatus::Candidate | MediaFileStatus::Approved | MediaFileStatus::Transcoding
+        ) {
             return TranscodeDecision::Skip(SkipReason::TranscodeInProgress);
         }
 
