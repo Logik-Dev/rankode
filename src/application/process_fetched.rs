@@ -52,7 +52,11 @@ impl ProcessFetchedLibraryItemUseCase {
                     compression_potential,
                     crf,
                 } => {
-                    new_status = Some(MediaFileStatus::Pending);
+                    // Invariant: status=Pending ↔ a real transcode is queued.
+                    // Catch-up relies on this to identify files that need recovery.
+                    if !dry_run {
+                        new_status = Some(MediaFileStatus::Pending);
+                    }
                     DomainEvent::TranscodeDecisionApproved {
                         media_file_id: file.id,
                         bpp,

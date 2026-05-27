@@ -1,0 +1,4 @@
+target/
+pgdata/
+*.log
+logs/

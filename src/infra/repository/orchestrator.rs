@@ -156,9 +156,14 @@ impl TranscodeLifecycleOrchestrator for PostgressRepository {
 
     #[instrument(skip(self), err)]
     async fn fail(&self, media_file_id: &MediaFileId, error: String) -> Result<()> {
-        insert_event_inner(&self.pool, DomainEvent::TranscodeFailed {
+        let mut tx = self.pool.begin().await?;
+        // Reset to Active, not Pending: a failed transcode is a real failure, not a crash.
+        // If we reset to Pending, catch-up would re-queue it on every restart.
+        update_file_status_inner(&mut *tx, MediaFileStatus::Active, media_file_id).await?;
+        insert_event_inner(&mut *tx, DomainEvent::TranscodeFailed {
             media_file_id: *media_file_id,
             error,
-        }).await.map_err(Into::into)
+        }).await?;
+        tx.commit().await.map_err(RepositoryError::Database).map_err(Into::into)
     }
 }

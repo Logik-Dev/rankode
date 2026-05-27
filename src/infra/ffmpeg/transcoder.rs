@@ -50,7 +50,7 @@ impl Transcoder for FfmpegTranscoder {
         let started_at = Instant::now();
 
         let status = Command::new("ffmpeg")
-            .args(["-i"])
+            .args(["-loglevel", "quiet", "-i"])
             .arg(input)
             .args(["-c:v", self.encoder, quality_flag, &quality_value, "-c:a", "copy", "-y"])
             .arg(&output)

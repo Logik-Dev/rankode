@@ -20,7 +20,7 @@ async fn start_mcp_server(repo: Arc<dyn PendingReportRepository>, port: u16) -> 
     let service = StreamableHttpService::new(
         move || Ok(RankodeHandler::new(repo.clone())),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default(),
+        StreamableHttpServerConfig::default().disable_allowed_hosts(),
     );
 
     let router = axum::Router::new().nest_service("/mcp", service);

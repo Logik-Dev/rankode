@@ -1,0 +1,7 @@
+  {
+    "mcpServers": {
+      "rankode": {
+        "url": "http://192.168.10.100:3333/mcp"
+      }
+    }
+  }

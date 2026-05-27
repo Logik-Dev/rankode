@@ -19,11 +19,12 @@ impl Config {
 
         let database_url = if let Some(dir) = socket_dir {
             let user = env::var("DB_USER").unwrap_or_else(|_| env::var("USER").unwrap_or_default());
+            let port = env::var("DB_PORT").unwrap_or_else(|_| "5433".to_string());
             let password = env::var("DB_PASSWORD").unwrap_or_default();
             if password.is_empty() {
-                format!("postgres://{}@/{}?host={}", user, name, dir)
+                format!("postgres:///{}?host={}&user={}&port={}", name, dir, user, port)
             } else {
-                format!("postgres://{}:{}@/{}?host={}", user, password, name, dir)
+                format!("postgres:///{}?host={}&user={}&password={}&port={}", name, dir, user, password, port)
             }
         } else {
             let host = env::var("DB_HOST").unwrap_or_else(|_| "localhost".to_string());

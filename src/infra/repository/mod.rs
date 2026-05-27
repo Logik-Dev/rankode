@@ -1,3 +1,4 @@
+mod catch_up;
 mod error;
 mod event;
 mod library_item;

@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::domain::{
     AbsoluteFilePath, DomainEvent, LibraryItem, LibraryItemId, MediaFile, MediaFileId,
-    MediaFileStatus, PendingTranscodeItem, SavingFileResult, ScannedFile, TranscodeOutput,
-    VideoProperties, WorkerSignal,
+    MediaFileStatus, PendingTranscodeItem, QueuedTranscode, SavingFileResult, ScannedFile,
+    TranscodeOutput, UnprocessedFile, VideoProperties, WorkerSignal,
 };
 
 #[async_trait]
@@ -27,7 +27,7 @@ pub trait LibraryItemProvider: Send + Sync {
 
 #[async_trait]
 pub trait EventListener: Send + Sync {
-    async fn listen(&self) -> Result<Receiver<WorkerSignal>>;
+    async fn listen(&self, tx: Sender<WorkerSignal>) -> Result<()>;
 }
 
 #[async_trait]
@@ -98,4 +98,12 @@ pub trait Transcoder: Send + Sync {
 #[async_trait]
 pub trait PendingReportRepository: Send + Sync {
     async fn list_pending(&self) -> Result<Vec<PendingTranscodeItem>>;
+}
+
+#[async_trait]
+pub trait CatchUpRepository: Send + Sync {
+    /// Active files with no terminal event — need metadata fetch or transcode decision.
+    async fn find_unprocessed_active_files(&self) -> Result<Vec<UnprocessedFile>>;
+    /// Pending or transcoding files — need transcode re-queue.
+    async fn find_queued_for_transcode(&self) -> Result<Vec<QueuedTranscode>>;
 }

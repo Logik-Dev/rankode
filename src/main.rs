@@ -13,8 +13,8 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 
 use crate::{
     application::{
-        ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase, ScanFolderUseCase,
-        WatchEventUseCase, transcode_file::TranscodeFileUseCase,
+        CatchUpUseCase, ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase,
+        ScanFolderUseCase, WatchEventUseCase, transcode_file::TranscodeFileUseCase,
     },
     cli::Command,
     domain::TakeTranscodeDecisionService,
@@ -82,8 +82,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ffmpeg_transcoder,
     ));
 
+    let catch_up_use_case = Arc::new(CatchUpUseCase::new(postgres_repo.clone()));
+
     let watch_use_case = WatchEventUseCase::new(
         postgres_listener,
+        catch_up_use_case,
         process_discovered_use_case.clone(),
         process_fetched_use_case.clone(),
         transcode_file_use_case,

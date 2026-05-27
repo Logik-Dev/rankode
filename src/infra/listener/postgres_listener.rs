@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use sqlx::{PgPool, postgres::PgListener};
-use tokio::sync::mpsc::{Receiver, channel};
+use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, instrument, warn};
 
 use crate::{
@@ -21,9 +21,8 @@ impl PostgresEventListener {
 
 #[async_trait]
 impl EventListener for PostgresEventListener {
-    #[instrument(skip(self), err)]
-    async fn listen(&self) -> Result<Receiver<WorkerSignal>> {
-        let (tx, rx) = channel(100);
+    #[instrument(skip(self, tx), err)]
+    async fn listen(&self, tx: Sender<WorkerSignal>) -> Result<()> {
         let mut listener = PgListener::connect_with(&self.pool)
             .await
             .map_err(ListenerError::ConnectionFailed)?;
@@ -54,7 +53,7 @@ impl EventListener for PostgresEventListener {
             }
         });
 
-        Ok(rx)
+        Ok(())
     }
 }
 
@@ -83,7 +82,8 @@ fn to_worker_signal(payload: NotificationPayload) -> Option<WorkerSignal> {
                 warn!("transcode_decision_approved event missing crf");
                 None
             })?;
-            Some(WorkerSignal::TranscodeApproved(id, crf))
+            let dry_run = payload.dry_run.unwrap_or(false);
+            Some(WorkerSignal::TranscodeApproved(id, crf, dry_run))
         }
         other => {
             debug!(event_type = other, "Unhandled event type, skipping");

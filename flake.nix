@@ -35,6 +35,8 @@
             pkgs.rustfmt
             pkgs.rust-analyzer
             pkgs.tree-sitter
+            pkgs.pkg-config
+            pkgs.openssl
           ];
 
           shellHook = ''
@@ -42,6 +44,9 @@
             export PGPORT="${pgPort}"
             export PGHOST="/tmp"
             export DATABASE_URL="postgresql://localhost:${pgPort}/${dbName}"
+            export DB_SOCKET_DIR="/tmp"
+            export DB_PORT="${pgPort}"
+            export DB_NAME="${dbName}"
 
             # Initialise le cluster si nécessaire
             if [ ! -d "$PGDATA" ]; then
@@ -49,12 +54,14 @@
               initdb --auth=trust --no-locale --encoding=UTF8
             fi
 
-            # Démarre PostgreSQL si pas déjà en cours
-            if ! pg_isready -q; then
+            # Démarre PostgreSQL en tâche de fond si pas déjà en cours
+            if ! pg_isready -q 2>/dev/null; then
               echo "Démarrage de PostgreSQL..."
-              pg_ctl start -l "$PGDATA/postgresql.log" -o "-k /tmp"
-              # Crée la base si elle n'existe pas
+              pg_ctl start -l "$PGDATA/postgresql.log" -o "-k /tmp" --no-wait
+              # Attend que postgres soit prêt
+              until pg_isready -q 2>/dev/null; do sleep 0.2; done
               createdb ${dbName} 2>/dev/null || true
+              echo "PostgreSQL prêt sur le port ${pgPort}"
             fi
           '';
         };

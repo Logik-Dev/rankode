@@ -7,4 +7,5 @@ pub(super) struct NotificationPayload {
     pub media_file_id: Option<Uuid>,
     pub library_item_id: Option<Uuid>,
     pub crf: Option<u8>,
+    pub dry_run: Option<bool>,
 }
