@@ -1,4 +1,4 @@
-# rankode 🎬
+# rankode
 
 > **A deliberately over-engineered HEVC re-encoding queue processor.**
 >
@@ -8,7 +8,9 @@
 
 ## What it does
 
-rankode scans your media library, extracts technical metadata via `ffprobe`, enriches files with movie info from Radarr, and decides whether re-encoding to HEVC is worthwhile — based on compression potential and IMDb rating.
+rankode scans your media library, extracts technical metadata via `ffprobe`, enriches files with movie info from Radarr, and decides whether re-encoding to HEVC is worthwhile based on compression potential and IMDb rating.
+
+Candidates are sent as **iOS notifications** through Home Assistant. You approve or reject each one from your phone. After transcoding, your HA dashboard shows completed files with their disk gain so you can delete the original when ready.
 
 PostgreSQL plays a dual role: **persistent storage** and **message queue** via `NOTIFY`/`LISTEN`. A trigger fires `pg_notify` on every event insert; workers pick it up and dispatch the next step.
 
@@ -23,49 +25,283 @@ cargo run -- migrate
 # 2. Scan a media directory
 cargo run -- scan /path/to/media
 
-# 3. Watch for events (dry run — no actual transcoding)
-cargo run -- watch --dry-run
-
-# 4. Watch for events (live)
+# 3. Start the watch daemon
 cargo run -- watch
 ```
 
 ---
 
-## How it works
+## Architecture
+
+rankode follows **hexagonal architecture**: `domain/` holds traits (ports) and models, `infra/` holds all implementations, `application/` holds use cases. The three layers never import in the wrong direction.
 
 ```
-┌─────────┐     ┌──────────────┐     ┌─────────┐
-│  scan   │────▶│  media_files │◀────│  watch  │
-└─────────┘     └──────────────┘     └─────────┘
-                       │                    │
-                       ▼                    ▼
-              ┌──────────────────┐  ┌─────────────────┐
-              │     events       │  │   Radarr API    │
-              └──────────────────┘  └─────────────────┘
-                       │
-                       ▼
-              ┌──────────────────┐
-              │  PostgresListener│  ◀── NOTIFY/LISTEN
-              └──────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                        Application                        │
+│  ScanFolder  ProcessDiscovered  AnalyzeFile  Transcode   │
+│  NotifyNextCandidate  ProcessApproval  DeleteSource  ...  │
+├─────────────────────┬────────────────────────────────────┤
+│       Domain        │              Infra                  │
+│  Entities · Ports   │  PostgreSQL · MQTT · ffmpeg · HTTP │
+│  Events · Services  │  Radarr · MCP server               │
+└─────────────────────┴────────────────────────────────────┘
 ```
 
-### File lifecycle
+---
+
+## File Status State Machine
+
+Every media file moves through a fixed set of statuses. Transitions are always driven by a `DomainEvent` written atomically to the `events` table.
 
 ```
-active → pending      (transcode queued)
-       → transcoding  (encoding in progress)
-       → transcoded   (done ✓)
-       → disappeared  (file gone during scan)
+                    ┌─────────────────────────────────────────────────────┐
+                    │                  scan                                │
+                    ▼                                                      │
+             ┌────────────┐   analyze    ┌───────────┐                    │
+  discover   │   active   │─────────────▶│ candidate │                    │
+─────────────▶            │              └─────┬─────┘                    │
+             └──────┬─────┘                    │ notify                   │
+                    │ disappear                ▼                           │
+                    ▼              ┌──────────────────┐                   │
+             ┌────────────┐        │     notified     │                   │
+             │disappeared │        └────────┬─────────┘                   │
+             └────────────┘         approve │  │ reject                   │
+                                            ▼  ▼                          │
+                                   ┌────────┐  ┌────────┐                 │
+                                   │approved│  │rejected│─────────────────┘
+                                   └───┬────┘  └────────┘
+                                       │ start
+                                       ▼
+                                ┌─────────────┐
+                                │ transcoding │
+                                └──────┬──────┘
+                                fail   │   complete
+                          ┌────────────┼──────────────────┐
+                          ▼            ▼                   │
+                       (active)  ┌────────────┐           │
+                                 │ transcoded │           │
+                                 └──────┬─────┘           │
+                                        │ delete source    │
+                                        ▼                  │
+                                ┌──────────────┐           │
+                                │source_deleted│           │
+                                └──────────────┘           │
+                                                           │
+                    notify_next_candidate ◀────────────────┘
 ```
 
-### Event flow
+| Status | Description |
+|--------|-------------|
+| `active` | File discovered, awaiting metadata and analysis |
+| `candidate` | Scored as worth transcoding, waiting for a notification slot |
+| `notified` | Notification sent to user, awaiting approval |
+| `approved` | User approved, queued for transcoding |
+| `rejected` | User rejected, returned to queue for next candidate |
+| `transcoding` | ffmpeg encode in progress |
+| `transcoded` | Encode complete, source file still on disk |
+| `source_deleted` | Source file deleted by user via HA dashboard |
+| `disappeared` | File not found during last scan |
 
-| Stage | Events |
-|-------|--------|
-| 🔍 Scan | `file_discovered`, `file_updated`, `file_disappeared` |
-| 📡 Metadata | `metadata_fetched`, `metadata_fetch_failed` |
-| 🎞️ Transcode | `transcode_decision_approved`, `transcode_decision_skipped`, `transcode_started`, `transcode_completed`, `transcode_failed` |
+---
+
+## Signal & Event Model
+
+Three distinct concepts carry information through the system:
+
+### DomainEvent — facts (write side, persisted)
+
+Written to the `events` table inside a transaction, atomically with any status change. Represent immutable facts about what happened.
+
+| Event | Trigger |
+|-------|---------|
+| `file_discovered` | New file found during scan |
+| `metadata_fetched` | Radarr lookup succeeded |
+| `metadata_fetch_failed` | Radarr lookup failed |
+| `transcode_scored` | File analyzed and scored as candidate |
+| `transcode_ineligible` | File analyzed and skipped (with reason) |
+| `transcode_notified` | Candidate sent to user |
+| `transcode_approved` | User approved via MQTT |
+| `transcode_rejected` | User rejected via MQTT |
+| `transcode_started` | ffmpeg encode started |
+| `transcode_completed` | ffmpeg encode finished (gain_bytes recorded) |
+| `transcode_failed` | ffmpeg encode errored |
+| `source_deleted` | Original file deleted by user |
+
+### WorkerSignal — dispatch signals (read side, ephemeral)
+
+Emitted by the PostgreSQL NOTIFY listener when an event is inserted. Lightweight — carries only the IDs needed to trigger the next use case. Never persisted.
+
+| Signal | Emitted on event | Triggers use case |
+|--------|-----------------|-------------------|
+| `FileDiscovered(id)` | `file_discovered` | `ProcessDiscoveredFileUseCase` |
+| `MetadataFetched(id)` | `metadata_fetched` | `AnalyzeFileUseCase` |
+| `TranscodeScored(id)` | `transcode_scored` | `NotifyNextCandidateUseCase` |
+| `TranscodeApproved(id, crf)` | `transcode_approved` | `TranscodeFileUseCase` → `NotifyNextCandidateUseCase` |
+| `TranscodeRejected(id)` | `transcode_rejected` | `NotifyNextCandidateUseCase` |
+
+### ApprovalSignal — user commands (MQTT, inbound)
+
+Received from Home Assistant via MQTT. Represent user intent, not facts — they produce `DomainEvent`s when processed.
+
+| Signal | MQTT topic | Payload |
+|--------|-----------|---------|
+| `Approved { id, crf, actor }` | `rankode/approval` | `{"status":"approved","media_file_id":"…","crf":22,"actor":"…"}` |
+| `Rejected { id, actor }` | `rankode/approval` | `{"status":"rejected","media_file_id":"…","actor":"…"}` |
+| `DeleteSource { id }` | `rankode/delete_source` | `{"media_file_id":"…"}` |
+
+---
+
+## Full Workflow
+
+### Phase 1 — Discovery & Analysis
+
+```
+cargo run -- scan /media
+        │
+        ├─ ffprobe each file
+        │
+        └─ INSERT media_files + file_discovered event
+                  │
+                  └─ pg_notify ──► WorkerSignal::FileDiscovered
+                                         │
+                                         ▼
+                                  ProcessDiscoveredFileUseCase
+                                  └─ Radarr lookup
+                                  └─ INSERT metadata_fetched event
+                                             │
+                                             └─ pg_notify ──► WorkerSignal::MetadataFetched
+                                                                    │
+                                                                    ▼
+                                                             AnalyzeFileUseCase
+                                                             └─ compute bpp, CRF, gain estimate
+                                                             └─ INSERT transcode_scored event
+                                                                        │
+                                                                        └─ pg_notify ──► WorkerSignal::TranscodeScored
+                                                                                               │
+                                                                                               ▼
+                                                                                        NotifyNextCandidateUseCase
+                                                                                        └─ pick best candidate (highest gain)
+                                                                                        └─ only if no file currently notified
+                                                                                        └─ MQTT publish ──► Home Assistant
+```
+
+### Phase 2 — Approval (one at a time)
+
+The notification slot enforces that only one file is in `notified` state at a time. After each approval or rejection, `NotifyNextCandidateUseCase` picks the next best candidate.
+
+```
+Home Assistant iOS notification
+        │
+        ├─ Approve ──► MQTT rankode/approval {"status":"approved","crf":22,...}
+        │                      │
+        │                      ▼
+        │               ProcessApprovalUseCase
+        │               └─ status: notified → approved
+        │               └─ INSERT transcode_approved event
+        │                         │
+        │                         └─ pg_notify ──► WorkerSignal::TranscodeApproved
+        │                                                │
+        │                                                ▼
+        │                                         TranscodeFileUseCase
+        │                                         └─ ffmpeg encode
+        │                                         └─ INSERT transcode_completed event
+        │                                         └─ MQTT autodiscovery ──► HA button + sensor
+        │                                                │
+        │                                                └─ NotifyNextCandidateUseCase (next candidate)
+        │
+        └─ Reject ──► MQTT rankode/approval {"status":"rejected",...}
+                             │
+                             └─ NotifyNextCandidateUseCase (next candidate)
+```
+
+### Phase 3 — Source Deletion (HA dashboard)
+
+After transcoding, a button and a gain sensor appear automatically in Home Assistant via MQTT autodiscovery. The user can delete the original file from any HA dashboard.
+
+```
+Home Assistant dashboard
+        │
+        └─ Press "Delete source" button
+                  │
+                  └─ MQTT rankode/delete_source {"media_file_id":"…"}
+                             │
+                             ▼
+                      DeleteSourceUseCase
+                      └─ remove source file from disk
+                      └─ status: transcoded → source_deleted
+                      └─ INSERT source_deleted event
+                      └─ MQTT empty payload ──► HA removes button + sensor
+```
+
+---
+
+## Home Assistant Integration
+
+rankode communicates with Home Assistant exclusively via MQTT.
+
+### Outbound (rankode → HA)
+
+| Topic | Retained | Content |
+|-------|----------|---------|
+| `rankode/candidate` | No | JSON notification for iOS actionable alert |
+| `homeassistant/button/rankode_{id}/config` | Yes | HA autodiscovery — delete source button |
+| `homeassistant/sensor/rankode_{id}_gain/config` | Yes | HA autodiscovery — gain in GB sensor |
+| `rankode/transcoded/{id}/state` | Yes | Gain value (e.g. `"1.23"`) |
+
+### Inbound (HA → rankode)
+
+| Topic | Content |
+|-------|---------|
+| `rankode/approval` | Approve or reject a candidate |
+| `rankode/delete_source` | Delete source of a transcoded file |
+
+---
+
+## Compression Analysis
+
+Files are skipped if they don't pass the minimum thresholds. For eligible files, compression potential is:
+
+```
+compression_potential = (bits_per_pixel - 0.04) × 10 × resolution_factor
+```
+
+`resolution_factor`: **3.0** (4K ≥ 3840×2160) · **1.5** (1080p ≥ 1920×1080) · **1.0** (720p ≥ 1280×720) · **0.6** (other)
+
+### CRF selection
+
+CRF is tuned by IMDb rating (better films = lower CRF = higher quality) with a bpp adjustment:
+
+| IMDb Rating | Base CRF | bpp ≥ 0.15 | bpp ≥ 0.08 | bpp ≥ 0.05 | bpp < 0.05 |
+|-------------|----------|------------|------------|------------|------------|
+| ≥ 7.5       | 22       | 21         | 22         | 23         | 24         |
+| ≥ 6.0       | 24       | 23         | 24         | 25         | 26         |
+| ≥ 4.0       | 26       | 25         | 26         | 27         | 28         |
+| < 4.0       | 28       | 27         | 28         | 29         | 30         |
+| None        | 24       | 23         | 24         | 25         | 26         |
+
+### Skip reasons
+
+| Reason | Description |
+|--------|-------------|
+| `ExcludedCodec` | Not H.264 — already HEVC or unsupported |
+| `FileTooSmall` | Below `RANKODE_MIN_FILE_SIZE_GB` |
+| `AlreadyCompressed` | bpp below `RANKODE_MIN_BITS_PER_PIXEL` |
+| `InsufficientCompressionPotential` | Gain estimate below threshold |
+| `AlreadyTranscoded` | File already encoded by rankode |
+| `TranscodeInProgress` | File is candidate/notified/approved/transcoding |
+| `FileDisappeared` | File not found on disk |
+
+---
+
+## Encoding
+
+Platform-specific encoders are selected automatically at startup:
+
+| Platform | Encoder |
+|----------|---------|
+| macOS (Apple Silicon) | `hevc_videotoolbox` |
+| Linux + NVIDIA | `hevc_nvenc` |
+| Fallback | `libx265` |
 
 ---
 
@@ -82,49 +318,10 @@ Recursively scans a directory (default: `.`) for video files.
 - Runs up to **8 concurrent ffprobe analyses**
 
 ### `rankode watch [--dry-run] [--scan PATH]`
-Listens for PostgreSQL `NOTIFY` events and dispatches workers.
+Starts the event loop: PostgreSQL NOTIFY listener + MQTT approval listener + MCP server.
 - `--dry-run` — analyze everything but skip actual transcoding
 - `--scan PATH` — run a scan pass before entering watch mode
 - Up to **8 concurrent workers**
-
----
-
-## Compression Analysis 📊
-
-Files are skipped if they don't pass the minimum thresholds. For eligible files, compression potential is computed as:
-
-```
-compression_potential = (bits_per_pixel - 0.04) × 10 × resolution_factor
-```
-
-`resolution_factor`: **3.0** (4K), **1.5** (1080p), **1.0** (720p), **0.6** (other)
-
-### CRF selection
-
-CRF is tuned by IMDb rating (better films = lower CRF = higher quality) with a fine-grained bpp adjustment:
-
-| IMDb Rating | Base CRF | bpp ≥ 0.15 | bpp ≥ 0.08 | bpp ≥ 0.05 | bpp < 0.05 |
-|-------------|----------|------------|------------|------------|------------|
-| ≥ 7.5       | 22       | 21         | 22         | 23         | 24         |
-| ≥ 6.0       | 24       | 23         | 24         | 25         | 26         |
-| ≥ 4.0       | 26       | 25         | 26         | 27         | 28         |
-| < 4.0       | 28       | 27         | 28         | 29         | 30         |
-
-### Skip reasons
-
-`CodecNotH264` · `FileTooSmall` · `AlreadyCompressed` · `InsufficientCompressionPotential` · `AlreadyTranscoded` · `FileDisappeared` · `TranscodeInProgress`
-
----
-
-## Encoding 🖥️
-
-Platform-specific encoders are selected automatically:
-
-| Platform | Encoder |
-|----------|---------|
-| macOS (Apple Silicon) | `hevc_videotoolbox` |
-| Linux + NVIDIA | `hevc_nvenc` |
-| Fallback | `libx265` |
 
 ---
 
@@ -148,6 +345,13 @@ Platform-specific encoders are selected automatically:
 | `RADARR_URL` | e.g. `http://localhost:7878` |
 | `RADARR_API_KEY` | Your Radarr API key |
 
+### MQTT
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MQTT_HOST` | `localhost` | MQTT broker host |
+| `MQTT_PORT` | `1883` | MQTT broker port |
+
 ### Thresholds
 
 | Variable | Default | Description |
@@ -162,6 +366,7 @@ Platform-specific encoders are selected automatically:
 
 - **ffprobe** — `brew install ffmpeg` on macOS
 - **PostgreSQL** — accessible via TCP or Unix socket
+- **MQTT broker** — e.g. Mosquitto (`brew install mosquitto`)
 
 ---
 
@@ -180,84 +385,6 @@ Platform-specific encoders are selected automatically:
 ## Supported Extensions
 
 `mp4` · `mkv` · `avi` · `mov` · `mpeg` · `mpg`
-
----
-
-## Roadmap
-
-Ideas explored during development, kept here as a backlog.
-
-### `rankode report` — transcode savings estimator
-
-After a scan, display a summary of files pending transcode sorted by estimated gain:
-
-```
-12 files pending — 847 GB total
-Estimated gain: ~420 GB (50%)
-
-File                         Size      → Estimated   Gain
-The Dark Knight (2160p)      45.2 GB   → 18.1 GB     -27 GB
-Inception (1080p)            28.4 GB   → 12.2 GB     -16 GB
-...
-```
-
-Estimation formula: `estimated_size = current_size × (0.04 / bits_per_pixel)`, using the bpp threshold already computed during the transcode decision.
-
-### Human approval before transcoding
-
-A new `awaiting_approval` status between `active` and `pending`. Files would wait for explicit validation before being queued. Possible approval mechanisms:
-
-- `rankode approve <id>` / `rankode approve --all` — CLI validation
-- Telegram / Discord bot — push notification with inline approve/reject buttons
-- Home Assistant + voice (see MCP section below)
-
-### MCP server — universal control interface
-
-Rankode exposes an MCP server. Any MCP-compatible client (Claude, Home Assistant, scripts) can interact with the queue via typed tools:
-
-```
-list_pending()           → pending files with gain estimates
-approve(id)              → queue a file for transcoding
-reject(id, reason)       → mark as skipped
-report()                 → global savings summary
-status()                 → running transcodes and progress
-```
-
-The MCP server acts as a **port** in the hexagonal architecture — domain use cases remain unchanged, the MCP layer is just another adapter.
-
-### Voice control via Home Assistant + MCP
-
-Home Assistant supports Claude as a conversation agent. With rankode's MCP server registered, voice commands become possible:
-
-```
-"Hey Siri, tell Home Assistant to approve the Dark Knight transcode"
-         ↓
-Home Assistant → Claude (conversation agent)
-         ↓
-Claude calls approve(id) via MCP tools
-         ↓
-PostgreSQL updated → worker starts transcoding
-```
-
-The MCP server becomes the single integration point — Alexa, Google Home, a mobile app, or a dashboard all go through the same tools without any changes to rankode's domain.
-
-### `rankode transcode <path>` — on-demand transcode
-
-Transcode a specific file immediately, with an estimate shown before starting:
-
-```
-File: The Dark Knight (2160p H264, 45.2 GB)
-Estimated output: ~18 GB  (-27 GB)
-Proceed? [y/N]
-```
-
-### Watch priority ordering
-
-Process files with the highest estimated gain first instead of insertion order, so that if a session is interrupted the most impactful transcodes are done first.
-
-### Prediction accuracy table
-
-A `predictions` table tracking `estimated_gain_bytes` vs actual `gain_bytes` from `transcode_completed` events — foundation for improving the estimation formula over time and building stats dashboards.
 
 ---
 
