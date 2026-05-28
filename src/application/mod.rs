@@ -1,4 +1,5 @@
 mod catch_up;
+mod delete_source;
 mod notify_next_candidate;
 mod process_approval;
 mod process_discovered;
@@ -9,6 +10,7 @@ mod watch_approval;
 mod watch_events;
 
 pub use catch_up::CatchUpUseCase;
+pub use delete_source::DeleteSourceUseCase;
 pub use notify_next_candidate::NotifyNextCandidateUseCase;
 pub use process_approval::ProcessApprovalUseCase;
 pub use process_discovered::ProcessDiscoveredFileUseCase;

@@ -171,6 +171,11 @@ impl From<DomainEvent> for EventRecord {
                 gain_bytes: Some(gain_bytes),
                 ..Default::default()
             },
+            DomainEvent::SourceDeleted { media_file_id } => EventRecord {
+                event_type: "source_deleted",
+                media_file_id: Some(media_file_id.as_uuid()),
+                ..Default::default()
+            },
         }
     }
 }

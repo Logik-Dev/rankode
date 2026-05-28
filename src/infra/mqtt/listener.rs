@@ -8,7 +8,7 @@ use tracing::warn;
 
 use crate::{
     domain::{ApprovalListener, ApprovalSignal},
-    infra::mqtt::mapping::ApprovalPayload,
+    infra::mqtt::mapping::{ApprovalPayload, DeleteSourcePayload},
 };
 
 pub struct MqttListener {
@@ -33,22 +33,36 @@ impl ApprovalListener for MqttListener {
         self.client
             .subscribe("rankode/approval", rumqttc::QoS::ExactlyOnce)
             .await?;
+        self.client
+            .subscribe("rankode/delete_source", rumqttc::QoS::ExactlyOnce)
+            .await?;
 
         loop {
             match self.eventloop.poll().await {
                 Ok(Event::Incoming(Packet::Publish(p))) => {
-                    match serde_json::from_slice::<ApprovalPayload>(&p.payload)
-                        .ok()
-                        .and_then(|payload| ApprovalSignal::try_from(payload).ok())
-                    {
-                        Some(signal) => {
-                            if tx.send(signal).await.is_err() {
+                    let signal = match p.topic.as_str() {
+                        "rankode/approval" => {
+                            serde_json::from_slice::<ApprovalPayload>(&p.payload)
+                                .ok()
+                                .and_then(|pl| ApprovalSignal::try_from(pl).ok())
+                        }
+                        "rankode/delete_source" => {
+                            serde_json::from_slice::<DeleteSourcePayload>(&p.payload)
+                                .ok()
+                                .map(|pl| ApprovalSignal::DeleteSource {
+                                    media_file_id: pl.media_file_id.into(),
+                                })
+                        }
+                        _ => None,
+                    };
+
+                    match signal {
+                        Some(s) => {
+                            if tx.send(s).await.is_err() {
                                 return Ok(());
                             }
                         }
-                        None => {
-                            tracing::warn!("received invalid approval payload, skipping")
-                        }
+                        None => warn!("received unrecognized or invalid MQTT payload, skipping"),
                     }
                 }
                 Ok(_) => {}

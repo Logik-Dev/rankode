@@ -1,4 +1,5 @@
 mod client;
+mod entity_publisher;
 mod error;
 mod listener;
 mod mapping;

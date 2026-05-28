@@ -5,7 +5,7 @@ use tracing::{info, instrument, warn};
 
 use crate::domain::{
     MediaFile, MediaFileAnalyzer, MediaFileId, MediaFileRepository, MediaFileStatus,
-    TranscodeLifecycleOrchestrator, Transcoder,
+    TranscodeEntityPublisher, TranscodeLifecycleOrchestrator, Transcoder, TranscodedNotification,
 };
 
 pub struct TranscodeFileUseCase {
@@ -13,6 +13,7 @@ pub struct TranscodeFileUseCase {
     pub analyzer: Arc<dyn MediaFileAnalyzer>,
     pub orchestrator: Arc<dyn TranscodeLifecycleOrchestrator>,
     pub transcoder: Arc<dyn Transcoder>,
+    pub entity_publisher: Arc<dyn TranscodeEntityPublisher>,
 }
 
 impl TranscodeFileUseCase {
@@ -21,8 +22,9 @@ impl TranscodeFileUseCase {
         analyzer: Arc<dyn MediaFileAnalyzer>,
         orchestrator: Arc<dyn TranscodeLifecycleOrchestrator>,
         transcoder: Arc<dyn Transcoder>,
+        entity_publisher: Arc<dyn TranscodeEntityPublisher>,
     ) -> Self {
-        Self { media_file_repo, analyzer, orchestrator, transcoder }
+        Self { media_file_repo, analyzer, orchestrator, transcoder, entity_publisher }
     }
 
     #[instrument(skip(self), err, name = "transcode", fields(file_id = %media_file_id, crf))]
@@ -68,6 +70,14 @@ impl TranscodeFileUseCase {
             video_properties,
         };
 
-        self.orchestrator.complete(media_file_id, dst, encode_duration_secs, gain_bytes).await
+        self.orchestrator.complete(media_file_id, dst, encode_duration_secs, gain_bytes).await?;
+
+        self.entity_publisher
+            .publish_transcoded(&TranscodedNotification {
+                media_file_id: *media_file_id,
+                file_name: src.filename.0,
+                gain_bytes,
+            })
+            .await
     }
 }

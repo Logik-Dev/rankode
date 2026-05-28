@@ -1,5 +1,6 @@
 use crate::domain::MediaFileId;
 
+/// Command signals received from the user via MQTT (Home Assistant → rankode).
 #[derive(Debug)]
 pub enum ApprovalSignal {
     Approved {
@@ -10,5 +11,8 @@ pub enum ApprovalSignal {
     Rejected {
         media_file_id: MediaFileId,
         rejected_by: String,
+    },
+    DeleteSource {
+        media_file_id: MediaFileId,
     },
 }

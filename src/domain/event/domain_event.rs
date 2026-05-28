@@ -53,4 +53,7 @@ pub enum DomainEvent {
         media_file_id: MediaFileId,
         error: String,
     },
+    SourceDeleted {
+        media_file_id: MediaFileId,
+    },
 }

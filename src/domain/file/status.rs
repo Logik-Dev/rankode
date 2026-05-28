@@ -12,6 +12,7 @@ pub enum MediaFileStatus {
     Pending,
     Transcoding,
     Transcoded,
+    SourceDeleted,
     Disappeared,
 }
 
@@ -28,6 +29,7 @@ impl FromStr for MediaFileStatus {
             "pending" => Ok(MediaFileStatus::Pending),
             "transcoding" => Ok(MediaFileStatus::Transcoding),
             "transcoded" => Ok(MediaFileStatus::Transcoded),
+            "source_deleted" => Ok(MediaFileStatus::SourceDeleted),
             "disappeared" => Ok(MediaFileStatus::Disappeared),
             unknown => Err(DomainError::UnknownStatus(unknown.to_string())),
         }
@@ -46,6 +48,7 @@ impl MediaFileStatus {
             MediaFileStatus::Transcoding => "transcoding",
             MediaFileStatus::Disappeared => "disappeared",
             MediaFileStatus::Transcoded => "transcoded",
+            MediaFileStatus::SourceDeleted => "source_deleted",
         }
     }
 }

@@ -55,6 +55,8 @@ impl ProcessApprovalUseCase {
                     )
                     .await
             }
+            // Routed away in WatchApprovalUseCase before reaching here.
+            ApprovalSignal::DeleteSource { .. } => unreachable!(),
         }
     }
 }

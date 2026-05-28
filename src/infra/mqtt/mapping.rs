@@ -6,6 +6,52 @@ use crate::{
     infra::mqtt::error::MqttError,
 };
 
+// ── Home Assistant autodiscovery ─────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub(super) struct HaDevice {
+    pub identifiers: Vec<&'static str>,
+    pub name: &'static str,
+    pub model: &'static str,
+}
+
+impl Default for HaDevice {
+    fn default() -> Self {
+        Self {
+            identifiers: vec!["rankode"],
+            name: "Rankode",
+            model: "HEVC Queue",
+        }
+    }
+}
+
+/// HA button entity — one per transcoded file. Pressing it sends a delete command.
+#[derive(Serialize)]
+pub(super) struct HaButtonConfig {
+    pub name: String,
+    pub unique_id: String,
+    pub command_topic: &'static str,
+    pub payload_press: String,
+    pub icon: &'static str,
+    pub device: HaDevice,
+}
+
+/// HA sensor entity — displays the gain in GB saved by deleting the source.
+#[derive(Serialize)]
+pub(super) struct HaSensorConfig {
+    pub name: String,
+    pub unique_id: String,
+    pub state_topic: String,
+    pub unit_of_measurement: &'static str,
+    pub icon: &'static str,
+    pub device: HaDevice,
+}
+
+#[derive(Deserialize)]
+pub(super) struct DeleteSourcePayload {
+    pub media_file_id: Uuid,
+}
+
 #[derive(Serialize)]
 pub(super) struct CandidatePayload {
     pub media_file_id: Uuid,

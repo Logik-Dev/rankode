@@ -1,5 +1,6 @@
 use crate::domain::MediaFileId;
 
+/// Data carried from the repository to the notifier when a candidate is ready to be sent to the user.
 pub struct CandidateNotification {
     pub media_file_id: MediaFileId,
     pub file_name: String,

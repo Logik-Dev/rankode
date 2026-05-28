@@ -7,7 +7,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use crate::domain::{
     AbsoluteFilePath, ApprovalSignal, CandidateNotification, DomainEvent, LibraryItem,
     LibraryItemId, MediaFile, MediaFileId, MediaFileStatus, PendingTranscodeItem, QueuedTranscode,
-    SavingFileResult, ScannedFile, TranscodeOutput, UnprocessedFile, VideoProperties, WorkerSignal,
+    SavingFileResult, ScannedFile, TranscodeOutput, TranscodedNotification, UnprocessedFile,
+    VideoProperties, WorkerSignal,
 };
 
 #[async_trait]
@@ -123,4 +124,12 @@ pub trait ApprovalNotifier: Send + Sync {
 #[async_trait]
 pub trait ApprovalListener: Send {
     async fn listen(self, tx: Sender<ApprovalSignal>) -> Result<()>;
+}
+
+#[async_trait]
+pub trait TranscodeEntityPublisher: Send + Sync {
+    /// Publishes a button + gain sensor to Home Assistant via MQTT autodiscovery (retained).
+    async fn publish_transcoded(&self, notification: &TranscodedNotification) -> Result<()>;
+    /// Removes the entities from Home Assistant by publishing an empty retained payload.
+    async fn unpublish_transcoded(&self, media_file_id: &MediaFileId) -> Result<()>;
 }

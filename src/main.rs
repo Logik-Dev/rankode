@@ -13,9 +13,9 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 
 use crate::{
     application::{
-        AnalyzeFileUseCase, CatchUpUseCase, NotifyNextCandidateUseCase, ProcessApprovalUseCase,
-        ProcessDiscoveredFileUseCase, ScanFolderUseCase, WatchApprovalUseCase, WatchEventUseCase,
-        transcode_file::TranscodeFileUseCase,
+        AnalyzeFileUseCase, CatchUpUseCase, DeleteSourceUseCase, NotifyNextCandidateUseCase,
+        ProcessApprovalUseCase, ProcessDiscoveredFileUseCase, ScanFolderUseCase,
+        WatchApprovalUseCase, WatchEventUseCase, transcode_file::TranscodeFileUseCase,
     },
     cli::Command,
     domain::TakeTranscodeDecisionService,
@@ -74,13 +74,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let notify_next_candidate = Arc::new(NotifyNextCandidateUseCase::new(
         postgres_repo.clone(),
         postgres_repo.clone(),
-        mqtt_notifier,
+        mqtt_notifier.clone(),
     ));
 
     let process_approval = Arc::new(ProcessApprovalUseCase::new(postgres_repo.clone()));
+    let delete_source = Arc::new(DeleteSourceUseCase::new(
+        postgres_repo.clone(),
+        postgres_repo.clone(),
+        mqtt_notifier.clone(),
+    ));
     let approval_watcher = WatchApprovalUseCase::new(
         MqttListener::new(&cfg.mqtt_host, cfg.mqtt_port),
         process_approval,
+        delete_source,
     );
 
     let encoder_arg = cmd.encoder_arg();
@@ -91,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ffprobe_analyzer.clone(),
         postgres_repo.clone(),
         ffmpeg_transcoder,
+        mqtt_notifier.clone(),
     ));
 
     let catch_up_use_case = Arc::new(CatchUpUseCase::new(postgres_repo.clone()));
