@@ -27,6 +27,12 @@ impl From<Uuid> for MediaFileId {
         Self(uuid)
     }
 }
+
+impl std::fmt::Display for MediaFileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_uuid())
+    }
+}
 pub struct FileName(pub String);
 pub struct AbsoluteFilePath(pub PathBuf);
 pub struct RootDirectory(pub PathBuf);

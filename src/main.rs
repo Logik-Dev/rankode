@@ -105,7 +105,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     if cmd
-        .execute(postgres_repo.clone(), scan_use_case, watch_use_case, approval_watcher)
+        .execute(
+            postgres_repo.clone(),
+            scan_use_case,
+            watch_use_case,
+            approval_watcher,
+        )
         .await
         .is_err()
     {
@@ -119,13 +124,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn init_tracing() {
     let stdout_layer = fmt::layer().compact().with_target(false);
 
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("logs/rankode.logs")
-        .expect("Failed to open rankode.logs");
-
-    let json_layer = fmt::layer().json().with_writer(file);
+    let file_appender = tracing_appender::rolling::daily("logs", "rankode.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    // Leak the guard so the background writer thread lives for the entire process.
+    std::mem::forget(guard);
+    let json_layer = fmt::layer().json().with_writer(non_blocking);
 
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))

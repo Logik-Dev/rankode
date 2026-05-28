@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 use crate::domain::{
     ApprovalSignal, DomainEvent, MediaFileStatus, TranscodeDecisionOrchestrator,
@@ -26,6 +26,7 @@ impl ProcessApprovalUseCase {
                 crf,
                 approved_by,
             } => {
+                info!(%media_file_id, crf, actor = %approved_by, "transcode approved");
                 self.decision_orchestrator
                     .save_decision(
                         &media_file_id,
@@ -42,6 +43,7 @@ impl ProcessApprovalUseCase {
                 media_file_id,
                 rejected_by,
             } => {
+                info!(%media_file_id, actor = %rejected_by, "transcode rejected");
                 self.decision_orchestrator
                     .save_decision(
                         &media_file_id,

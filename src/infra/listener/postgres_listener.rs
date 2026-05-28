@@ -34,14 +34,15 @@ impl EventListener for PostgresEventListener {
 
         tokio::spawn(async move {
             while let Ok(notification) = listener.recv().await {
-                let payload =
-                    match serde_json::from_str::<NotificationPayload>(notification.payload()) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            error!(%e, payload = notification.payload(), "Failed to parse notification payload");
-                            continue;
-                        }
-                    };
+                let payload = match serde_json::from_str::<NotificationPayload>(
+                    notification.payload(),
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        error!(%e, payload = notification.payload(), "Failed to parse notification payload");
+                        continue;
+                    }
+                };
 
                 let Some(signal) = to_worker_signal(payload) else {
                     continue;
@@ -72,6 +73,13 @@ fn to_worker_signal(payload: NotificationPayload) -> Option<WorkerSignal> {
                 None
             })?;
             Some(WorkerSignal::MetadataFetched(id))
+        }
+        "transcode_scored" => {
+            let id = payload.media_file_id.map(Into::into).or_else(|| {
+                warn!("transcode_scored event missing media_file_id");
+                None
+            })?;
+            Some(WorkerSignal::TranscodeScored(id))
         }
         "transcode_approved" => {
             let id = payload.media_file_id.map(MediaFileId::from).or_else(|| {

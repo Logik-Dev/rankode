@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::mpsc::channel;
-use tracing::{error, instrument};
+use tracing::{error, info, instrument};
 
 use crate::{
     application::ProcessApprovalUseCase,
@@ -25,6 +25,7 @@ impl WatchApprovalUseCase {
 
     #[instrument(skip(self), err, name = "watch_approval")]
     pub async fn execute(self) -> Result<()> {
+        info!("listening for approvals on MQTT");
         let (tx, mut rx) = channel(32);
         let listener = self.listener;
         let process_approval = self.process_approval;

@@ -109,6 +109,9 @@ async fn dispatch_event(
         WorkerSignal::MetadataFetched(library_item_id) => {
             process_fetched_use_case.execute(library_item_id).await?
         }
+        WorkerSignal::TranscodeScored(_media_file_id) => {
+            notify_next_candidate.execute().await?;
+        }
         WorkerSignal::TranscodeApproved(media_file_id, crf) => {
             transcode_file_use_case.execute(&media_file_id, crf).await?;
             notify_next_candidate.execute().await?;

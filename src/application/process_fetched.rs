@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use tracing::instrument;
+use tracing::{debug, info, instrument};
 
 use crate::domain::{
     DomainEvent, LibraryItemId, LibraryItemRepository, MediaFileRepository, MediaFileStatus,
@@ -55,6 +55,12 @@ impl AnalyzeFileUseCase {
                 } => {
                     let estimated_gain_bytes =
                         (file.size_bytes.0 as f64 * (1.0 - 0.04 / bpp)) as u64;
+                    info!(
+                        file = %file.filename.0,
+                        gain_gb = format!("{:.2}", estimated_gain_bytes as f64 / 1e9),
+                        crf,
+                        "scored as transcode candidate"
+                    );
                     new_status = Some(MediaFileStatus::Candidate);
                     DomainEvent::TranscodeScored {
                         media_file_id: file.id,
@@ -64,22 +70,28 @@ impl AnalyzeFileUseCase {
                         estimated_gain_bytes,
                     }
                 }
-                TranscodeDecision::Skip(skip_reason) => DomainEvent::TranscodeIneligible {
-                    media_file_id: file.id,
-                    skip_reason,
-                    compression_potential: None,
-                    bpp: None,
-                },
+                TranscodeDecision::Skip(skip_reason) => {
+                    debug!(file = %file.filename.0, reason = ?skip_reason, "ineligible for transcode");
+                    DomainEvent::TranscodeIneligible {
+                        media_file_id: file.id,
+                        skip_reason,
+                        compression_potential: None,
+                        bpp: None,
+                    }
+                }
                 TranscodeDecision::SkipWithAnalysis {
                     reason,
                     bpp,
                     compression_potential,
-                } => DomainEvent::TranscodeIneligible {
-                    media_file_id: file.id,
-                    skip_reason: reason,
-                    bpp: Some(bpp),
-                    compression_potential: Some(compression_potential),
-                },
+                } => {
+                    debug!(file = %file.filename.0, reason = ?reason, bpp, compression_potential, "ineligible for transcode");
+                    DomainEvent::TranscodeIneligible {
+                        media_file_id: file.id,
+                        skip_reason: reason,
+                        bpp: Some(bpp),
+                        compression_potential: Some(compression_potential),
+                    }
+                }
             };
 
             self.decision_orchestrator

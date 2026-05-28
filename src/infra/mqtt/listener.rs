@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet};
 use tokio::sync::mpsc::Sender;
+use tracing::warn;
 
 use crate::{
     domain::{ApprovalListener, ApprovalSignal},
@@ -45,7 +46,9 @@ impl ApprovalListener for MqttListener {
                                 return Ok(());
                             }
                         }
-                        None => tracing::warn!("received invalid approval payload, skipping"),
+                        None => {
+                            tracing::warn!("received invalid approval payload, skipping")
+                        }
                     }
                 }
                 Ok(_) => {}
