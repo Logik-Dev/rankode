@@ -13,14 +13,14 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 
 use crate::{
     application::{
-        CatchUpUseCase, ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase,
+        AnalyzeFileUseCase, CatchUpUseCase, ProcessApprovalUseCase, ProcessDiscoveredFileUseCase,
         ScanFolderUseCase, WatchEventUseCase, transcode_file::TranscodeFileUseCase,
     },
     cli::Command,
-    domain::TakeTranscodeDecisionService,
+    domain::{ApprovalListener, TakeTranscodeDecisionService},
     infra::{
-        Config, FfmpegTranscoder, Ffprobe, PostgresEventListener, PostgressRepository,
-        RadarrProvider, TokioScanner,
+        Config, FfmpegTranscoder, Ffprobe, MqttListener, MqttNotifier, PostgresEventListener,
+        PostgressRepository, RadarrProvider, TokioScanner,
     },
 };
 
@@ -64,12 +64,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg.min_compression_potential,
     ));
 
-    // When metadata fetched
-    let process_fetched_use_case = Arc::new(ProcessFetchedLibraryItemUseCase::new(
+    let mqtt_notifier = Arc::new(MqttNotifier::new(&cfg.mqtt_host, cfg.mqtt_port));
+
+    let process_approval = Arc::new(ProcessApprovalUseCase::new(postgres_repo.clone()));
+    let mqtt_listener = MqttListener::new(&cfg.mqtt_host, cfg.mqtt_port);
+    let (approval_tx, mut approval_rx) = tokio::sync::mpsc::channel(32);
+    tokio::spawn(async move {
+        if let Err(e) = mqtt_listener.listen(approval_tx).await {
+            tracing::error!(%e, "mqtt approval listener failed");
+        }
+    });
+    tokio::spawn(async move {
+        while let Some(signal) = approval_rx.recv().await {
+            if let Err(e) = process_approval.execute(signal).await {
+                tracing::error!(%e, "process approval failed");
+            }
+        }
+    });
+
+    // When metadata fetched: take decision, set file as candidate, notify for approval
+    let process_fetched_use_case = Arc::new(AnalyzeFileUseCase::new(
         take_decision_service.clone(),
         postgres_repo.clone(),
         postgres_repo.clone(),
         postgres_repo.clone(),
+        mqtt_notifier,
     ));
 
     let encoder_arg = cmd.encoder_arg();

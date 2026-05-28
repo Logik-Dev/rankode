@@ -7,7 +7,7 @@ use tracing::{error, instrument};
 
 use crate::{
     application::{
-        CatchUpUseCase, ProcessDiscoveredFileUseCase, ProcessFetchedLibraryItemUseCase,
+        CatchUpUseCase, ProcessDiscoveredFileUseCase, AnalyzeFileUseCase,
         transcode_file::TranscodeFileUseCase,
     },
     domain::{EventListener, WorkerSignal},
@@ -17,7 +17,7 @@ pub struct WatchEventUseCase {
     listener: Arc<dyn EventListener>,
     catch_up: Arc<CatchUpUseCase>,
     discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
-    process_fetched_use_case: Arc<ProcessFetchedLibraryItemUseCase>,
+    process_fetched_use_case: Arc<AnalyzeFileUseCase>,
     transcode_file_use_case: Arc<TranscodeFileUseCase>,
 }
 
@@ -26,7 +26,7 @@ impl WatchEventUseCase {
         listener: Arc<dyn EventListener>,
         catch_up: Arc<CatchUpUseCase>,
         discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
-        process_fetched_use_case: Arc<ProcessFetchedLibraryItemUseCase>,
+        process_fetched_use_case: Arc<AnalyzeFileUseCase>,
         transcode_file_use_case: Arc<TranscodeFileUseCase>,
     ) -> Self {
         Self {
@@ -88,7 +88,7 @@ impl WatchEventUseCase {
 async fn dispatch_event(
     signal: WorkerSignal,
     discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
-    process_fetched_use_case: Arc<ProcessFetchedLibraryItemUseCase>,
+    process_fetched_use_case: Arc<AnalyzeFileUseCase>,
     transcode_file_use_case: Arc<TranscodeFileUseCase>,
 ) -> Result<()> {
     match signal {

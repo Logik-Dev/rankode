@@ -21,3 +21,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 rmcp = { version = "1.7.0", features = ["server", "macros", "transport-streamable-http-server"] }
 axum = "0.8"
 tokio-util = { version = "0.7.18", features = ["rt"] }
+rumqttc = "0.25"

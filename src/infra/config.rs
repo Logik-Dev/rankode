@@ -9,6 +9,9 @@ pub struct Config {
     pub min_file_size_gb: f64,
     pub min_bits_per_pixel: f64,
     pub min_compression_potential: f64,
+    // MQTT
+    pub mqtt_host: String,
+    pub mqtt_port: u16,
 }
 
 impl Config {
@@ -59,6 +62,12 @@ impl Config {
             .parse()
             .unwrap_or(1.0);
 
+        let mqtt_host = env::var("MQTT_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let mqtt_port = env::var("MQTT_PORT")
+            .unwrap_or_else(|_| "1883".to_string())
+            .parse()
+            .unwrap_or(1883);
+
         Config {
             database_url,
             radarr_url,
@@ -66,6 +75,8 @@ impl Config {
             min_file_size_gb,
             min_bits_per_pixel,
             min_compression_potential,
+            mqtt_host,
+            mqtt_port,
         }
     }
 }

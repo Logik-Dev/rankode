@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::domain::{
-    AbsoluteFilePath, DomainEvent, LibraryItem, LibraryItemId, MediaFile, MediaFileId,
-    MediaFileStatus, PendingTranscodeItem, QueuedTranscode, SavingFileResult, ScannedFile,
-    TranscodeOutput, UnprocessedFile, VideoProperties, WorkerSignal,
+    AbsoluteFilePath, ApprovalSignal, CandidateNotification, DomainEvent, LibraryItem,
+    LibraryItemId, MediaFile, MediaFileId, MediaFileStatus, PendingTranscodeItem, QueuedTranscode,
+    SavingFileResult, ScannedFile, TranscodeOutput, UnprocessedFile, VideoProperties, WorkerSignal,
 };
 
 #[async_trait]
@@ -106,4 +106,14 @@ pub trait CatchUpRepository: Send + Sync {
     async fn find_unprocessed_active_files(&self) -> Result<Vec<UnprocessedFile>>;
     /// Pending or transcoding files — need transcode re-queue.
     async fn find_queued_for_transcode(&self) -> Result<Vec<QueuedTranscode>>;
+}
+
+#[async_trait]
+pub trait ApprovalNotifier: Send + Sync {
+    async fn notify_candidate(&self, notification: CandidateNotification) -> Result<()>;
+}
+
+#[async_trait]
+pub trait ApprovalListener: Send {
+    async fn listen(self, tx: Sender<ApprovalSignal>) -> Result<()>;
 }

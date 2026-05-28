@@ -73,15 +73,13 @@ fn to_worker_signal(payload: NotificationPayload) -> Option<WorkerSignal> {
             })?;
             Some(WorkerSignal::MetadataFetched(id))
         }
-        // Phase 1 bridge: transcode_scored still auto-triggers transcode until Phase 4 wires
-        // up the manual approval flow (transcode_approved → WorkerSignal::TranscodeApproved).
-        "transcode_scored" => {
+        "transcode_approved" => {
             let id = payload.media_file_id.map(MediaFileId::from).or_else(|| {
-                warn!("transcode_scored event missing media_file_id");
+                warn!("transcode_approved event missing media_file_id");
                 None
             })?;
             let crf = payload.crf.or_else(|| {
-                warn!("transcode_scored event missing crf");
+                warn!("transcode_approved event missing crf");
                 None
             })?;
             Some(WorkerSignal::TranscodeApproved(id, crf))
