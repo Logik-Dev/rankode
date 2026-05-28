@@ -1,3 +1,4 @@
+mod candidate;
 mod catch_up;
 mod error;
 mod event;

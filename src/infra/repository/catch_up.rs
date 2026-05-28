@@ -55,11 +55,11 @@ impl CatchUpRepository for PostgressRepository {
             JOIN LATERAL (
                 SELECT crf
                 FROM events
-                WHERE media_file_id = mf.id AND event_type = 'transcode_decision_approved'
+                WHERE media_file_id = mf.id AND event_type = 'transcode_approved'
                 ORDER BY occurred_at DESC
                 LIMIT 1
             ) e ON true
-            WHERE mf.status IN ('pending', 'transcoding')
+            WHERE mf.status IN ('approved', 'pending', 'transcoding')
             "#
         )
         .fetch_all(&self.pool)

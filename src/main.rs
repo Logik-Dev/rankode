@@ -13,11 +13,12 @@ use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberI
 
 use crate::{
     application::{
-        AnalyzeFileUseCase, CatchUpUseCase, ProcessApprovalUseCase, ProcessDiscoveredFileUseCase,
-        ScanFolderUseCase, WatchEventUseCase, transcode_file::TranscodeFileUseCase,
+        AnalyzeFileUseCase, CatchUpUseCase, NotifyNextCandidateUseCase, ProcessApprovalUseCase,
+        ProcessDiscoveredFileUseCase, ScanFolderUseCase, WatchApprovalUseCase, WatchEventUseCase,
+        transcode_file::TranscodeFileUseCase,
     },
     cli::Command,
-    domain::{ApprovalListener, TakeTranscodeDecisionService},
+    domain::TakeTranscodeDecisionService,
     infra::{
         Config, FfmpegTranscoder, Ffprobe, MqttListener, MqttNotifier, PostgresEventListener,
         PostgressRepository, RadarrProvider, TokioScanner,
@@ -43,53 +44,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ffprobe_analyzer = Arc::new(Ffprobe);
     let radarr_provider = Arc::new(RadarrProvider::new(&cfg.radarr_url, &cfg.radarr_api_key));
 
-    // Scan folders to find movies
     let scan_use_case = Arc::new(ScanFolderUseCase::new(
         postgres_repo.clone(),
         tokio_scanner.clone(),
         ffprobe_analyzer.clone(),
     ));
 
-    // Fetch movies metadata with radarr for now
     let process_discovered_use_case = Arc::new(ProcessDiscoveredFileUseCase::new(
         postgres_repo.clone(),
         radarr_provider.clone(),
         postgres_repo.clone(),
     ));
 
-    // Take a transcode decision
     let take_decision_service = Arc::new(TakeTranscodeDecisionService::new(
         cfg.min_file_size_gb,
         cfg.min_bits_per_pixel,
         cfg.min_compression_potential,
     ));
 
-    let mqtt_notifier = Arc::new(MqttNotifier::new(&cfg.mqtt_host, cfg.mqtt_port));
-
-    let process_approval = Arc::new(ProcessApprovalUseCase::new(postgres_repo.clone()));
-    let mqtt_listener = MqttListener::new(&cfg.mqtt_host, cfg.mqtt_port);
-    let (approval_tx, mut approval_rx) = tokio::sync::mpsc::channel(32);
-    tokio::spawn(async move {
-        if let Err(e) = mqtt_listener.listen(approval_tx).await {
-            tracing::error!(%e, "mqtt approval listener failed");
-        }
-    });
-    tokio::spawn(async move {
-        while let Some(signal) = approval_rx.recv().await {
-            if let Err(e) = process_approval.execute(signal).await {
-                tracing::error!(%e, "process approval failed");
-            }
-        }
-    });
-
-    // When metadata fetched: take decision, set file as candidate, notify for approval
     let process_fetched_use_case = Arc::new(AnalyzeFileUseCase::new(
         take_decision_service.clone(),
         postgres_repo.clone(),
         postgres_repo.clone(),
         postgres_repo.clone(),
+    ));
+
+    let mqtt_notifier = Arc::new(MqttNotifier::new(&cfg.mqtt_host, cfg.mqtt_port));
+
+    let notify_next_candidate = Arc::new(NotifyNextCandidateUseCase::new(
+        postgres_repo.clone(),
+        postgres_repo.clone(),
         mqtt_notifier,
     ));
+
+    let process_approval = Arc::new(ProcessApprovalUseCase::new(postgres_repo.clone()));
+    let approval_watcher = WatchApprovalUseCase::new(
+        MqttListener::new(&cfg.mqtt_host, cfg.mqtt_port),
+        process_approval,
+    );
 
     let encoder_arg = cmd.encoder_arg();
     let ffmpeg_transcoder = Arc::new(FfmpegTranscoder::build(encoder_arg).await);
@@ -109,10 +101,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         process_discovered_use_case.clone(),
         process_fetched_use_case.clone(),
         transcode_file_use_case,
+        notify_next_candidate,
     );
 
     if cmd
-        .execute(postgres_repo.clone(), scan_use_case, watch_use_case)
+        .execute(postgres_repo.clone(), scan_use_case, watch_use_case, approval_watcher)
         .await
         .is_err()
     {

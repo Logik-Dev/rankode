@@ -7,8 +7,8 @@ use tracing::{error, instrument};
 
 use crate::{
     application::{
-        CatchUpUseCase, ProcessDiscoveredFileUseCase, AnalyzeFileUseCase,
-        transcode_file::TranscodeFileUseCase,
+        AnalyzeFileUseCase, CatchUpUseCase, NotifyNextCandidateUseCase,
+        ProcessDiscoveredFileUseCase, transcode_file::TranscodeFileUseCase,
     },
     domain::{EventListener, WorkerSignal},
 };
@@ -19,6 +19,7 @@ pub struct WatchEventUseCase {
     discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
     process_fetched_use_case: Arc<AnalyzeFileUseCase>,
     transcode_file_use_case: Arc<TranscodeFileUseCase>,
+    notify_next_candidate: Arc<NotifyNextCandidateUseCase>,
 }
 
 impl WatchEventUseCase {
@@ -28,6 +29,7 @@ impl WatchEventUseCase {
         discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
         process_fetched_use_case: Arc<AnalyzeFileUseCase>,
         transcode_file_use_case: Arc<TranscodeFileUseCase>,
+        notify_next_candidate: Arc<NotifyNextCandidateUseCase>,
     ) -> Self {
         Self {
             listener,
@@ -35,6 +37,7 @@ impl WatchEventUseCase {
             discovered_file_use_case,
             process_fetched_use_case,
             transcode_file_use_case,
+            notify_next_candidate,
         }
     }
 
@@ -67,8 +70,15 @@ impl WatchEventUseCase {
                     let discovered_file_use_case = self.discovered_file_use_case.clone();
                     let process_fetched_use_case = self.process_fetched_use_case.clone();
                     let transcode_file_use_case = self.transcode_file_use_case.clone();
+                    let notify_next_candidate = self.notify_next_candidate.clone();
 
-                    workers.push(dispatch_event(notif, discovered_file_use_case, process_fetched_use_case, transcode_file_use_case));
+                    workers.push(dispatch_event(
+                        notif,
+                        discovered_file_use_case,
+                        process_fetched_use_case,
+                        transcode_file_use_case,
+                        notify_next_candidate,
+                    ));
                 }
                 Some(result) = workers.next() => {
                     if let Err(error) = result {
@@ -90,6 +100,7 @@ async fn dispatch_event(
     discovered_file_use_case: Arc<ProcessDiscoveredFileUseCase>,
     process_fetched_use_case: Arc<AnalyzeFileUseCase>,
     transcode_file_use_case: Arc<TranscodeFileUseCase>,
+    notify_next_candidate: Arc<NotifyNextCandidateUseCase>,
 ) -> Result<()> {
     match signal {
         WorkerSignal::FileDiscovered(media_file_id) => {
@@ -99,7 +110,11 @@ async fn dispatch_event(
             process_fetched_use_case.execute(library_item_id).await?
         }
         WorkerSignal::TranscodeApproved(media_file_id, crf) => {
-            transcode_file_use_case.execute(&media_file_id, crf).await?
+            transcode_file_use_case.execute(&media_file_id, crf).await?;
+            notify_next_candidate.execute().await?;
+        }
+        WorkerSignal::TranscodeRejected(_) => {
+            notify_next_candidate.execute().await?;
         }
     }
 

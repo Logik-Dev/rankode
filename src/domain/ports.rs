@@ -109,6 +109,13 @@ pub trait CatchUpRepository: Send + Sync {
 }
 
 #[async_trait]
+pub trait CandidateRepository: Send + Sync {
+    /// Returns the best Candidate (highest gain) if no file is currently Notified.
+    /// Returns None if the notification slot is taken or no candidates exist.
+    async fn find_next_candidate(&self) -> Result<Option<CandidateNotification>>;
+}
+
+#[async_trait]
 pub trait ApprovalNotifier: Send + Sync {
     async fn notify_candidate(&self, notification: CandidateNotification) -> Result<()>;
 }

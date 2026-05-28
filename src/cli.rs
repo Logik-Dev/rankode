@@ -1,5 +1,5 @@
 use crate::{
-    application::{ScanFolderUseCase, WatchEventUseCase},
+    application::{ScanFolderUseCase, WatchApprovalUseCase, WatchEventUseCase},
     infra::{PostgressRepository, mcp::server::run_mcp_server},
 };
 use anyhow::Result;
@@ -59,6 +59,7 @@ impl Command {
         repository: Arc<PostgressRepository>,
         scanner: Arc<ScanFolderUseCase>,
         watcher: WatchEventUseCase,
+        approval_watcher: WatchApprovalUseCase,
     ) -> Result<()> {
         match self {
             Command::Migrate => repository.migrate().await,
@@ -70,9 +71,10 @@ impl Command {
                 }
 
                 tokio::select! {
-                    _watch = watcher.execute() => { Ok(()) },
-                    _mcp = run_mcp_server(repository.clone(), mcp_port) => { Ok(()) },
-                    _ = tokio::signal::ctrl_c() => { Ok(()) },
+                    _ = watcher.execute()          => Ok(()),
+                    _ = approval_watcher.execute() => Ok(()),
+                    _ = run_mcp_server(repository.clone(), mcp_port) => Ok(()),
+                    _ = tokio::signal::ctrl_c()    => Ok(()),
                 }
             }
         }

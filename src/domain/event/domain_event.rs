@@ -20,6 +20,10 @@ pub enum DomainEvent {
         bpp: f64,
         compression_potential: f64,
         crf: u8,
+        estimated_gain_bytes: u64,
+    },
+    TranscodeNotified {
+        media_file_id: MediaFileId,
     },
     TranscodeIneligible {
         media_file_id: MediaFileId,

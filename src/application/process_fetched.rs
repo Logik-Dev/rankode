@@ -4,9 +4,8 @@ use anyhow::Result;
 use tracing::instrument;
 
 use crate::domain::{
-    ApprovalNotifier, CandidateNotification, DomainEvent, LibraryItemId, LibraryItemRepository,
-    MediaFileRepository, MediaFileStatus, TakeTranscodeDecisionService, TranscodeDecision,
-    TranscodeDecisionOrchestrator,
+    DomainEvent, LibraryItemId, LibraryItemRepository, MediaFileRepository, MediaFileStatus,
+    TakeTranscodeDecisionService, TranscodeDecision, TranscodeDecisionOrchestrator,
 };
 
 pub struct AnalyzeFileUseCase {
@@ -14,7 +13,6 @@ pub struct AnalyzeFileUseCase {
     media_file_repository: Arc<dyn MediaFileRepository>,
     take_decision: Arc<TakeTranscodeDecisionService>,
     decision_orchestrator: Arc<dyn TranscodeDecisionOrchestrator>,
-    approval_notifier: Arc<dyn ApprovalNotifier>,
 }
 
 impl AnalyzeFileUseCase {
@@ -23,14 +21,12 @@ impl AnalyzeFileUseCase {
         library_repository: Arc<dyn LibraryItemRepository>,
         media_file_repository: Arc<dyn MediaFileRepository>,
         decision_orchestrator: Arc<dyn TranscodeDecisionOrchestrator>,
-        approval_notifier: Arc<dyn ApprovalNotifier>,
     ) -> Self {
         Self {
             take_decision,
             library_repository,
             media_file_repository,
             decision_orchestrator,
-            approval_notifier,
         }
     }
 
@@ -48,7 +44,6 @@ impl AnalyzeFileUseCase {
 
         for file in &media_files {
             let mut new_status: Option<MediaFileStatus> = None;
-            let mut candidate_notification: Option<CandidateNotification> = None;
 
             let decision = self.take_decision.execute(file, library_item.imdb_rating);
 
@@ -60,23 +55,13 @@ impl AnalyzeFileUseCase {
                 } => {
                     let estimated_gain_bytes =
                         (file.size_bytes.0 as f64 * (1.0 - 0.04 / bpp)) as u64;
-
                     new_status = Some(MediaFileStatus::Candidate);
-                    candidate_notification = Some(CandidateNotification {
-                        media_file_id: file.id,
-                        file_name: file.filename.0.clone(),
-                        size_bytes: file.size_bytes.0,
-                        estimated_gain_bytes,
-                        compression_potential,
-                        crf,
-                        title: Some(library_item.title.clone()),
-                        imdb_rating: library_item.imdb_rating,
-                    });
                     DomainEvent::TranscodeScored {
                         media_file_id: file.id,
                         bpp,
                         compression_potential,
                         crf,
+                        estimated_gain_bytes,
                     }
                 }
                 TranscodeDecision::Skip(skip_reason) => DomainEvent::TranscodeIneligible {
@@ -100,12 +85,6 @@ impl AnalyzeFileUseCase {
             self.decision_orchestrator
                 .save_decision(&file.id, new_status, event)
                 .await?;
-
-            if let Some(notification) = candidate_notification {
-                self.approval_notifier
-                    .notify_candidate(notification)
-                    .await?;
-            }
         }
 
         Ok(())

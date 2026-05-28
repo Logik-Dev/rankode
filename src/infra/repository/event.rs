@@ -96,12 +96,19 @@ impl From<DomainEvent> for EventRecord {
                 bpp,
                 compression_potential,
                 crf,
+                estimated_gain_bytes,
             } => EventRecord {
                 event_type: "transcode_scored",
                 media_file_id: Some(media_file_id.as_uuid()),
                 bits_per_pixel: Some(bpp),
                 compression_potential: Some(compression_potential),
                 crf: Some(crf.into()),
+                gain_bytes: Some(estimated_gain_bytes as i64),
+                ..Default::default()
+            },
+            DomainEvent::TranscodeNotified { media_file_id } => EventRecord {
+                event_type: "transcode_notified",
+                media_file_id: Some(media_file_id.as_uuid()),
                 ..Default::default()
             },
             DomainEvent::TranscodeIneligible {
