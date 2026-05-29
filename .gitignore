@@ -36,3 +36,10 @@ Thumbs.db
 # AI
 .claude/
 CLAUDE.md
+
+# Syncthing
+.stfolder/
+.stignore
+
+# MCP local config
+.mcp.json
